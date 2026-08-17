@@ -68,6 +68,14 @@ button:focus-visible {
   margin-bottom: 0.35rem;
 }
 
+.staff-photo {
+  width: 200px;
+  max-width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 6px;
+}
+
 .key-info {
   background-color: var(--cmu-surface);
   border-color: rgba(28, 28, 28, 0.16);
