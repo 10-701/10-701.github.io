@@ -101,7 +101,7 @@ test -n "${GH_TOKEN:-}" || {
 Configure the repository remote:
 
 ```bash
-repository_url="https://github.com/mld-instructors/10701-f26-website.git"
+repository_url="https://github.com/10-701/10-701.github.io.git"
 
 if git remote get-url origin >/dev/null 2>&1; then
   git remote set-url origin "$repository_url"
@@ -144,6 +144,7 @@ current_branch="$(git branch --show-current)"
 
 pr_url="$(
   gh pr list \
+    --repo 10-701/10-701.github.io \
     --state open \
     --head "$current_branch" \
     --base main \
@@ -158,6 +159,7 @@ If no open pull request exists, create one:
 if [ -z "$pr_url" ]; then
   pr_url="$(
     gh pr create \
+      --repo 10-701/10-701.github.io \
       --base main \
       --head "$current_branch" \
       --fill
@@ -178,7 +180,7 @@ Update the PR description if `--fill` does not produce an adequate description.
 After creating or locating the pull request, enable auto-merge using squash merging:
 
 ```bash
-gh pr merge --auto --squash "$pr_url"
+gh pr merge --repo 10-701/10-701.github.io --auto --squash "$pr_url"
 ```
 
 This command may schedule the merge, but required human reviews and checks must remain enforced.
