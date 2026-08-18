@@ -12,3 +12,12 @@ For implementation tasks, after making and validating the requested changes:
 8. Report the pull request URL in the final response.
 9. Never merge the pull request.
 10. Never push directly to `main`.
+
+if git remote get-url origin >/dev/null 2>&1; then
+  git remote set-url origin https://github.com/mld-instructors/10701-f26-website.git
+else
+  git remote add origin https://github.com/mld-instructors/10701-f26-website.git
+fi
+
+gh auth setup-git
+git push --set-upstream origin HEAD
