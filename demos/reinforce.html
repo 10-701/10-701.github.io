@@ -1,0 +1,1091 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>REINFORCE on a Line</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* Layout: notes + controls | parameter plane | world views; step table spans below. */
+:root {
+  color-scheme: light;
+  --page: #f3f3f5;
+  --surface: #fdfdfd;
+  --ink: #15151b;
+  --ink-2: #4c4c56;
+  --muted: #84848e;
+  --grid: #e4e4ea;
+  --hair: rgba(21,21,27,0.12);
+  --accent: #5b49d0;      /* selected episode, chain */
+  --accent-wash: rgba(91,73,208,0.10);
+  --mean: #e0602e;        /* batch estimates */
+  --goal: #128f66;
+  --right: #2a78d6;
+  --left: #e34948;
+  --mid: #f0efec;
+  --heat-lo: #f6f9fe;
+  --heat-hi: #6da7ec;
+  --heat-line: rgba(13,54,107,0.22);
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page: #0e0e11; --surface: #18181c; --ink: #ededf1; --ink-2: #c1c1ca; --muted: #8b8b95;
+    --grid: #2a2a31; --hair: rgba(255,255,255,0.11); --accent: #9d93ee; --accent-wash: rgba(157,147,238,0.14);
+    --mean: #f07a45; --goal: #2bc08b; --right: #3987e5; --left: #e66767; --mid: #383835;
+    --heat-lo: #18181c; --heat-hi: #1d5aa6; --heat-line: rgba(205,226,251,0.16);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0e0e11; --surface: #18181c; --ink: #ededf1; --ink-2: #c1c1ca; --muted: #8b8b95;
+  --grid: #2a2a31; --hair: rgba(255,255,255,0.11); --accent: #9d93ee; --accent-wash: rgba(157,147,238,0.14);
+  --mean: #f07a45; --goal: #2bc08b; --right: #3987e5; --left: #e66767; --mid: #383835;
+  --heat-lo: #18181c; --heat-hi: #1d5aa6; --heat-line: rgba(205,226,251,0.16);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--page); color: var(--ink); font-family: var(--font-body); font-size: 14px; line-height: 1.5; }
+.wrap { max-width: 1400px; margin: 0 auto; padding: 20px 20px 40px; display: grid; gap: 14px; }
+header { display: grid; gap: 4px; }
+h1 { font-size: 22px; font-weight: 600; margin: 0; letter-spacing: -0.01em; text-wrap: balance; }
+.lede { margin: 0; color: var(--ink-2); max-width: 80ch; }
+.formula { font-family: var(--font-mono); font-size: 13px; color: var(--ink-2); }
+h2 { font-size: 13px; font-weight: 600; margin: 0; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-2); }
+h3 { font-size: 17px; font-weight: 600; margin: 0; text-wrap: balance; }
+
+.scenes { display: flex; flex-wrap: wrap; gap: 6px; }
+.scenes button { font: inherit; font-size: 13px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--hair); background: var(--surface); color: var(--ink); cursor: pointer; display: inline-flex; gap: 6px; align-items: baseline; }
+.scenes button .n { font-family: var(--font-mono); color: var(--muted); font-size: 12px; }
+.scenes button:hover { border-color: var(--accent); }
+.scenes button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.scenes button[aria-pressed="true"] .n { color: rgba(255,255,255,0.8); }
+:root[data-theme="dark"] .scenes button[aria-pressed="true"] { color: #111; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .scenes button[aria-pressed="true"] { color: #111; } }
+
+.grid { display: grid; gap: 14px; grid-template-columns: 300px minmax(0, 1fr); align-items: start; }
+.stack { display: grid; gap: 14px; align-content: start; min-width: 0; }
+.main { display: grid; gap: 14px; grid-template-columns: minmax(0, 1fr) 400px; align-items: start; min-width: 0; }
+.main .tablecard { grid-column: 1 / -1; }
+.card { background: var(--surface); border: 1px solid var(--hair); border-radius: 10px; padding: 14px; display: grid; gap: 10px; min-width: 0; }
+@media (max-width: 1260px) {
+  .grid { grid-template-columns: minmax(0, 1fr); }
+  .stack.side { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
+}
+@media (max-width: 1000px) { .main { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 760px) { .stack.side { grid-template-columns: minmax(0, 1fr); } }
+.notes .body { color: var(--ink); max-width: 65ch; }
+.notes .body p { margin: 0 0 8px; }
+.notes .body p:last-child { margin: 0; }
+.notes .diff { font-size: 12.5px; color: var(--ink-2); background: var(--accent-wash); border-radius: 6px; padding: 7px 9px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.notes .diff[hidden] { display: none; }
+.notes .tryit { border-left: 3px solid var(--accent); padding: 2px 0 2px 10px; color: var(--ink-2); }
+i.m, .m { font-family: var(--font-mono); font-style: normal; font-size: 0.95em; }
+
+svg { display: block; width: 100%; height: auto; touch-action: none; }
+svg text { font-family: var(--font-body); }
+#plane { cursor: crosshair; border-radius: 6px; }
+#plane:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.plottitle { font-size: 15px; font-weight: 500; text-align: center; margin-bottom: -4px; }
+.plottitle span { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.scorepick { display: grid; gap: 4px; font-size: 12.5px; color: var(--ink-2); }
+.pickrow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.pickrow .seg label { padding: 4px 14px; }
+.seg.compact { flex-wrap: wrap; }
+.seg.compact label { flex: 1 0 32px; padding: 3px 0; font-family: var(--font-mono); font-size: 12px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12.5px; color: var(--ink-2); }
+.legend span[hidden] { display: none; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend svg { width: 26px; height: 12px; display: inline-block; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 8px; }
+.stat { border: 1px solid var(--hair); border-radius: 8px; padding: 6px 9px; display: grid; gap: 1px; }
+.stat .k { font-size: 11.5px; color: var(--muted); }
+.stat .v { font-family: var(--font-mono); font-size: 13.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.stat.flag { border-color: var(--mean); }
+
+.epbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: 12.5px; color: var(--ink-2); }
+.epbar .num { font-family: var(--font-mono); color: var(--ink); font-variant-numeric: tabular-nums; }
+.btn { font: inherit; font-size: 13px; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--hair); background: var(--surface); color: var(--ink); cursor: pointer; }
+.btn.sm { padding: 3px 7px; font-size: 12px; }
+.btn:hover { border-color: var(--accent); }
+.btn:focus-visible, .scenes button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+:root[data-theme="dark"] .btn.primary { color: #111; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .btn.primary { color: #111; } }
+.btn:disabled { opacity: 0.45; cursor: default; }
+.checks { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12.5px; color: var(--ink-2); }
+.checks label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+.checks input { accent-color: var(--accent); margin: 0; }
+.smallrow { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start; }
+.cap { font-size: 12px; color: var(--ink-2); margin: 0; }
+.cap .m { color: var(--ink); }
+
+.controls .row { display: grid; gap: 3px; }
+.controls label, .controls .lbl { font-size: 12.5px; color: var(--ink-2); display: flex; justify-content: space-between; gap: 8px; }
+.controls output { font-family: var(--font-mono); color: var(--ink); font-variant-numeric: tabular-nums; }
+.controls input[type=range] { width: 100%; accent-color: var(--accent); margin: 0; }
+.controls .group { display: grid; gap: 10px; padding-top: 10px; border-top: 1px solid var(--hair); }
+.controls .group:first-of-type { border-top: 0; padding-top: 0; }
+.seg { display: flex; border: 1px solid var(--hair); border-radius: 7px; overflow: hidden; }
+.seg label { flex: 1; display: block; text-align: center; font-size: 12.5px; padding: 4px 4px; cursor: pointer; color: var(--ink-2); border-left: 1px solid var(--hair); }
+.seg label:first-child { border-left: 0; }
+.seg input { position: absolute; opacity: 0; pointer-events: none; }
+.seg label:has(input:checked) { background: var(--accent-wash); color: var(--ink); font-weight: 500; }
+.seg label:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: -2px; }
+.seg label:has(input:disabled) { opacity: 0.4; cursor: default; }
+.btnrow { display: flex; flex-wrap: wrap; gap: 6px; }
+.hint { font-size: 12px; color: var(--muted); margin: 0; }
+
+.tablewrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { padding: 4px 10px; text-align: right; white-space: nowrap; }
+th { font-weight: 500; color: var(--ink-2); font-size: 12px; border-bottom: 1px solid var(--hair); }
+td { font-family: var(--font-mono); font-variant-numeric: tabular-nums; border-bottom: 1px solid var(--grid); }
+th:first-child, td:first-child { text-align: left; }
+tbody tr { cursor: default; }
+tbody tr.hl { background: var(--accent-wash); }
+tfoot td { border-bottom: 0; font-weight: 500; }
+.tip { position: fixed; pointer-events: none; background: var(--surface); color: var(--ink); border: 1px solid var(--hair); border-radius: 6px; padding: 5px 8px; font-size: 12px; box-shadow: 0 4px 14px rgba(0,0,0,0.12); display: none; z-index: 10; font-family: var(--font-mono); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>REINFORCE on a Line</h1>
+    <p class="lede">An agent walks left or right on a line of positions −6…6 and is rewarded for staying near the goal. Its policy has two parameters, so every score vector, every weighted contribution and every gradient estimate is an arrow in the same plane.</p>
+    <div class="formula">π(→ | x) = σ(θ₁·x/3 + θ₂) &nbsp;·&nbsp; ∇log π(a | x) = (𝟙[a = →] − π(→ | x)) · (x/3, 1) &nbsp;·&nbsp; ĝ = Σₜ Gₜ ∇log π(aₜ | xₜ)</div>
+  </header>
+
+  <nav class="scenes" id="scenes" aria-label="Preset scenes"></nav>
+
+  <div class="grid">
+    <div class="stack side">
+    <section class="card notes">
+      <h2>Scene notes</h2>
+      <h3 id="noteTitle" aria-live="polite"></h3>
+      <div class="body" id="noteBody"></div>
+      <div class="diff" id="noteDiff" hidden><span id="noteDiffText"></span> <button class="btn sm" id="restoreScene">Restore scene</button></div>
+    </section>
+    <section class="card mdp">
+      <h2>The MDP</h2>
+      <svg id="mdp" viewBox="0 0 280 108" role="img" aria-label="States on a line, an example episode under an optimal policy drawn as arcs, and the reward for each state."></svg>
+      <p class="cap" id="mdpCap"></p>
+    </section>
+
+    <section class="card controls" id="controls">
+      <h2>Settings</h2>
+      <div class="group">
+        <div class="row"><label for="H">Horizon H <output id="H_o"></output></label><input type="range" id="H" min="1" max="10" step="1"></div>
+        <div class="row"><label for="N">Episodes per batch N <output id="N_o"></output></label><input type="range" id="N" min="1" max="400" step="1"></div>
+        <div class="row"><label for="S">Start positions ±S, uniform <output id="S_o"></output></label><input type="range" id="S" min="0" max="4" step="1"></div>
+        <div class="row"><label for="g">Goal position <output id="g_o"></output></label><input type="range" id="g" min="-3" max="3" step="1"></div>
+      </div>
+      <div class="group">
+        <div class="row"><span class="lbl">Reward −|x − goal| + c, paid</span>
+          <div class="seg" role="radiogroup" aria-label="Reward timing">
+            <label><input type="radio" name="rewardMode" value="dense">after every step</label>
+            <label><input type="radio" name="rewardMode" value="terminal">at the end only</label>
+          </div></div>
+        <div class="row"><label for="c">Reward offset c <output id="c_o"></output></label><input type="range" id="c" min="-10" max="10" step="1"></div>
+        <div class="row"><span class="lbl">Discounting</span>
+          <div class="seg" role="radiogroup" aria-label="Discounting">
+            <label><input type="radio" name="mode" value="undiscounted">none</label>
+            <label><input type="radio" name="mode" value="delay">by delay</label>
+            <label><input type="radio" name="mode" value="absolute">from start</label>
+          </div></div>
+        <div class="row"><label for="gamma">Discount γ <output id="gamma_o"></output></label><input type="range" id="gamma" min="0" max="0.99" step="0.01"></div>
+      </div>
+      <div class="group">
+        <div class="row"><label for="scale">Arrow scale <output id="scale_o"></output></label><input type="range" id="scale" min="-4" max="4" step="0.25"></div>
+        <p class="hint">The middle of the slider is fitted to the cloud of episode estimates when a scene loads, and stays fixed while you change settings.</p>
+            </div>
+      <div class="group">
+        <div class="row"><label for="alpha">Learning rate α <output id="alpha_o"></output></label><input type="range" id="alpha" min="-3" max="0" step="0.05"></div>
+        <div class="btnrow"><button class="btn" id="resample">Resample batch</button><button class="btn" id="resetTheta">Reset θ</button></div>
+        <div class="btnrow"><button class="btn" id="stepBtn">Take one step</button><button class="btn primary" id="trainBtn">Train</button><button class="btn" id="clearPath">Clear path</button></div>
+        <p class="hint">Each step draws a fresh batch and moves θ by α·ĝ.</p>
+      </div>
+    </section>
+    </div>
+    <div class="main">
+    <section class="card plane">
+      <h2>Parameter plane (θ₁, θ₂)</h2>
+      <div class="plottitle" id="plotTitle"></div>
+      <svg id="plane" viewBox="0 0 540 528" tabindex="0" role="img" aria-label="Parameter plane with contours of the objective and gradient arrows. Drag to move theta; arrow keys nudge it."></svg>
+      <div class="scorepick" role="radiogroup" aria-label="Display">
+        <span class="lbl">Display</span>
+        <div class="pickrow">
+          <div class="seg"><label><input type="radio" name="scoreX" value="off" checked>gradient estimates</label></div>
+          <span class="or">or score vectors at state x =</span>
+        </div>
+        <div class="seg compact" id="scorePick"></div>
+      </div>
+      <div class="legend">
+        <span class="lg-est"><svg viewBox="0 0 26 12"><line x1="1" y1="6" x2="18" y2="6" stroke="var(--ink)" stroke-width="2.5"/><path d="M25 6 L17 2 L17 10Z" fill="var(--ink)"/></svg>exact gradient ∇J</span>
+        <span class="lg-est"><svg viewBox="0 0 26 12"><line x1="1" y1="6" x2="18" y2="6" stroke="var(--ink)" stroke-width="1.6" stroke-dasharray="3 2.5"/><path d="M24 6 L17 2.5 L17 9.5Z" fill="none" stroke="var(--ink)" stroke-width="1.3"/></svg>estimator's mean E[ĝ]</span>
+        <span class="lg-est"><svg viewBox="0 0 26 12"><line x1="1" y1="6" x2="18" y2="6" stroke="var(--mean)" stroke-width="2.5"/><path d="M25 6 L17 2 L17 10Z" fill="var(--mean)"/></svg>batch average ĝ</span>
+        <span class="lg-est"><svg viewBox="0 0 26 12"><circle cx="13" cy="6" r="3.2" fill="var(--mean)" fill-opacity="0.5"/></svg>one episode's estimate</span>
+        <span class="lg-est"><svg viewBox="0 0 26 12"><line x1="1" y1="6" x2="12" y2="6" stroke="var(--accent)" stroke-width="2"/><line x1="12" y1="6" x2="25" y2="3" stroke="var(--accent)" stroke-width="2"/><circle cx="12" cy="6" r="2" fill="var(--accent)"/></svg>selected episode, link per step</span>
+        <span><svg viewBox="0 0 26 12"><line x1="1" y1="6" x2="25" y2="6" stroke="var(--muted)" stroke-width="1.3" stroke-dasharray="5 3"/></svg>policies that switch at goal</span>
+        <span id="legScore" hidden><svg viewBox="0 0 26 12"><line x1="13" y1="6" x2="2" y2="6" stroke="var(--left)" stroke-width="2"/><line x1="13" y1="6" x2="24" y2="6" stroke="var(--right)" stroke-width="2"/></svg>score vectors for → (blue) and ← (red)</span>
+      </div>
+      <p class="cap">Contour bands: darker is higher <span class="m" id="objName">J(θ)</span>; each band covers an equal share of the visible plane. Arrows are drawn from θ at the scale in the title. Drag anywhere to move θ; click a dot to select its episode.</p>
+      <div class="stats" id="stats"></div>
+    </section>
+
+    <div class="stack">
+    <section class="card world">
+      <h2>Episodes</h2>
+      <svg id="traj" viewBox="0 0 400 296" role="img" aria-label="Positions over time for every episode in the batch, with the selected episode highlighted."></svg>
+      <div class="epbar">
+        <button class="btn" id="epPrev" aria-label="Previous episode">‹</button>
+        <span>Episode <span class="num" id="epNum"></span></span>
+        <button class="btn" id="epNext" aria-label="Next episode">›</button>
+        <span>return <span class="num" id="epRet"></span></span>
+        <button class="btn sm" id="epBest">Best</button>
+        <button class="btn sm" id="epWorst">Worst</button>
+      </div>
+      <p class="cap">Left column: the policy's probability of stepping right at each position. Grey paths: the batch, each shifted slightly so overlaps stay visible. A path that turns at a position curves just short of it; a path that keeps going passes straight through.</p>
+    </section>
+
+    <section class="card small">
+      <div class="smallrow">
+        <div style="display:grid;gap:6px">
+          <h2>Score vectors</h2>
+          <svg id="score" viewBox="0 0 200 200" role="img" aria-label="Score vectors of the selected episode."></svg>
+          <p class="cap">Selected episode. Solid: action taken. Dashed: the other action. Numbers are time steps. Grid spacing <span class="m" id="scoreGrid">0.5</span>.</p>
+        </div>
+        <div style="display:grid;gap:6px">
+          <h2>Credit</h2>
+          <svg id="credit" viewBox="0 0 200 200" role="img" aria-label="Credit matrix: weight of each reward on each action."></svg>
+          <p class="cap" id="creditCap"></p>
+        </div>
+      </div>
+    </section>
+
+
+    </div>
+    <section class="card tablecard">
+      <h2>Selected episode, step by step</h2>
+      <div class="tablewrap"><table id="table"></table></div>
+    </section>
+    </div>
+  </div>
+</div>
+<div class="tip" id="tip"></div>
+
+<script>
+// REINFORCE on a discrete line: environment, policy, exact objective/gradient, estimator.
+const RL = (() => {
+  const W = 6;          // walls at -W..W
+  const L = 3;          // feature scale: phi(x) = (x/L, 1)
+
+  const sig = z => 1 / (1 + Math.exp(-z));
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const phi = x => [x / L, 1];
+  const pRight = (th, x) => sig(th[0] * x / L + th[1]);
+  const move = (x, a) => clamp(x + (a ? 1 : -1), -W, W);
+
+  // reward for the transition at time t landing in x1
+  function reward(cfg, t, x1) {
+    const base = -Math.abs(x1 - cfg.g);
+    if (cfg.rewardMode === 'terminal') return t === cfg.H - 1 ? base + cfg.c : 0;
+    return base + cfg.c;
+  }
+
+  // score of action a (1 = right) in state x
+  function score(th, x, a) {
+    const p = pRight(th, x), f = phi(x), k = (a ? 1 : 0) - p;
+    return [k * f[0], k * f[1]];
+  }
+
+  function starts(cfg) { const s = []; for (let x = -cfg.S; x <= cfg.S; x++) s.push(x); return s; }
+
+  // gamma used inside the objective (contours, true gradient)
+  const objGamma = cfg => cfg.mode === 'absolute' ? cfg.gamma : 1;
+  // credit weight of reward k on action t
+  function weight(cfg, t, k) {
+    const g = cfg.mode === 'undiscounted' ? 1 : cfg.gamma;
+    if (cfg.mode === 'delay') return k >= t ? Math.pow(g, k - t) : 0;
+    const full = cfg.returns === 'full';
+    if (!full && k < t) return 0;
+    return cfg.mode === 'absolute' ? Math.pow(g, k) : 1;
+  }
+
+  // Backward DP: V[t][x+W] under discount gam
+  function values(th, cfg, gam) {
+    const H = cfg.H, n = 2 * W + 1;
+    const V = Array.from({ length: H + 1 }, () => new Float64Array(n));
+    for (let t = H - 1; t >= 0; t--) {
+      for (let x = -W; x <= W; x++) {
+        const p = pRight(th, x);
+        const xr = move(x, 1), xl = move(x, 0);
+        const qr = reward(cfg, t, xr) + gam * V[t + 1][xr + W];
+        const ql = reward(cfg, t, xl) + gam * V[t + 1][xl + W];
+        V[t][x + W] = p * qr + (1 - p) * ql;
+      }
+    }
+    return V;
+  }
+
+  function J(th, cfg) {
+    const V = values(th, cfg, objGamma(cfg));
+    const s = starts(cfg);
+    let tot = 0; for (const x of s) tot += V[0][x + W];
+    return tot / s.length;
+  }
+
+  // sum_t outer^t sum_x d_t(x) sum_a pi score Q^inner_t(x,a)
+  function pgSum(th, cfg, outer, inner) {
+    const H = cfg.H, n = 2 * W + 1;
+    const V = values(th, cfg, inner);
+    let d = new Float64Array(n);
+    const s = starts(cfg);
+    for (const x of s) d[x + W] += 1 / s.length;
+    const grad = [0, 0];
+    for (let t = 0; t < H; t++) {
+      const nd = new Float64Array(n);
+      const wt = Math.pow(outer, t);
+      for (let x = -W; x <= W; x++) {
+        const dx = d[x + W]; if (dx === 0) continue;
+        const p = pRight(th, x), f = phi(x);
+        const xr = move(x, 1), xl = move(x, 0);
+        const qr = reward(cfg, t, xr) + inner * V[t + 1][xr + W];
+        const ql = reward(cfg, t, xl) + inner * V[t + 1][xl + W];
+        // sum_a pi(a) (1[a]-p) Q = p(1-p)(qr-ql)
+        const k = wt * dx * p * (1 - p) * (qr - ql);
+        grad[0] += k * f[0]; grad[1] += k * f[1];
+        nd[xr + W] += dx * p; nd[xl + W] += dx * (1 - p);
+      }
+      d = nd;
+    }
+    return grad;
+  }
+
+  // true gradient of the objective whose contours are shown
+  function trueGrad(th, cfg) { const g = objGamma(cfg); return pgSum(th, cfg, g, g); }
+  // expected value of the estimator
+  function expectedEst(th, cfg) {
+    if (cfg.mode === 'undiscounted') return pgSum(th, cfg, 1, 1);
+    if (cfg.mode === 'absolute') return pgSum(th, cfg, cfg.gamma, cfg.gamma);
+    return pgSum(th, cfg, 1, cfg.gamma);
+  }
+
+  // Common random numbers so dragging theta morphs the batch smoothly
+  function mulberry32(a) {
+    return function () {
+      a |= 0; a = a + 0x6D2B79F5 | 0;
+      let t = Math.imul(a ^ a >>> 15, 1 | a);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  const MAXN = 500, MAXH = 12;
+  function noise(seed) {
+    const r = mulberry32(seed * 2654435761 >>> 0);
+    const u0 = new Float64Array(MAXN), u = new Float64Array(MAXN * MAXH);
+    for (let i = 0; i < MAXN; i++) { u0[i] = r(); for (let t = 0; t < MAXH; t++) u[i * MAXH + t] = r(); }
+    return { u0, u };
+  }
+
+  function episode(th, cfg, nz, i) {
+    const s = starts(cfg), H = cfg.H;
+    const x0 = s[Math.min(s.length - 1, Math.floor(nz.u0[i] * s.length))];
+    const xs = [x0], as = [], ps = [], rs = [], sc = [];
+    let x = x0;
+    for (let t = 0; t < H; t++) {
+      const p = pRight(th, x);
+      const a = nz.u[i * MAXH + t] < p ? 1 : 0;
+      const x1 = move(x, a);
+      as.push(a); ps.push(a ? p : 1 - p); sc.push(score(th, x, a));
+      rs.push(reward(cfg, t, x1)); xs.push(x1); x = x1;
+    }
+    const G = [], contrib = [], est = [0, 0];
+    for (let t = 0; t < H; t++) {
+      let g = 0; for (let k = 0; k < H; k++) g += weight(cfg, t, k) * rs[k];
+      G.push(g);
+      const c = [g * sc[t][0], g * sc[t][1]];
+      contrib.push(c); est[0] += c[0]; est[1] += c[1];
+    }
+    let ret = 0; for (const r of rs) ret += r;
+    // d(est)/dc: adding c to every emitted reward moves the estimate along u
+    const u = [0, 0];
+    for (let t = 0; t < H; t++) {
+      let w = 0;
+      if (cfg.rewardMode === 'terminal') w = weight(cfg, t, H - 1);
+      else for (let k = 0; k < H; k++) w += weight(cfg, t, k);
+      u[0] += w * sc[t][0]; u[1] += w * sc[t][1];
+    }
+    return { xs, as, ps, rs, sc, G, contrib, est, ret, u };
+  }
+
+  function batch(th, cfg, nz) {
+    const eps = [];
+    for (let i = 0; i < cfg.N; i++) eps.push(episode(th, cfg, nz, i));
+    const m = [0, 0];
+    for (const e of eps) { m[0] += e.est[0] / cfg.N; m[1] += e.est[1] / cfg.N; }
+    let v = 0;
+    for (const e of eps) v += ((e.est[0] - m[0]) ** 2 + (e.est[1] - m[1]) ** 2);
+    const sd = cfg.N > 1 ? Math.sqrt(v / (cfg.N - 1)) : 0;
+    return { eps, mean: m, sd };
+  }
+
+  return { W, L, sig, phi, pRight, move, reward, score, weight, objGamma, J, trueGrad, expectedEst, noise, episode, batch, MAXN, MAXH };
+})();
+if (typeof module !== 'undefined') module.exports = RL;
+
+</script>
+<script>
+(() => {
+const $ = id => document.getElementById(id);
+const R = RL;
+const PL = { x0: -8, x1: 4, y0: -6, y1: 6, l: 50, t: 10, w: 480, h: 480 };
+const X = v => PL.l + (v - PL.x0) / (PL.x1 - PL.x0) * PL.w;
+const Y = v => PL.t + (PL.y1 - v) / (PL.y1 - PL.y0) * PL.h;
+const IX = px => PL.x0 + (px - PL.l) / PL.w * (PL.x1 - PL.x0);
+const IY = py => PL.y1 - (py - PL.t) / PL.h * (PL.y1 - PL.y0);
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const norm = v => Math.hypot(v[0], v[1]);
+const fmt = (v, d = 2) => { if (Math.abs(v) < 0.5 * Math.pow(10, -d)) v = 0; return v.toFixed(d).replace('-', '−'); };
+const fv = (v, d = 2) => `(${fmt(v[0], d)}, ${fmt(v[1], d)})`;
+const SUB = ['₀','₁','₂','₃','₄','₅','₆','₇','₈','₉'];
+const sub = n => String(n).split('').map(c => SUB[+c]).join('');
+
+const DEF = { H: 6, N: 10, S: 4, g: 2, rewardMode: 'terminal', c: 0, mode: 'undiscounted', gamma: 0.7, returns: 'togo' };
+const DEF_ALPHA = 0.25;
+const m = s => `<span class="m">${s}</span>`;
+const offTxt = c => c.c === 0 ? '' : ` ${c.c > 0 ? '+' : '−'} ${Math.abs(c.c)}`;
+const rw = c => c.rewardMode === 'dense'
+  ? `earns ${m('−|x − goal|' + offTxt(c))} after every step`
+  : `is scored once, ${m('−|x − goal|' + offTxt(c))} at its final position`;
+
+const SCENES = [
+  { id: 'scene-1', name: 'Score vectors', cfg: { H: 1, N: 20 }, th: [-3, 1],
+    title: 'Score vectors in a contextual bandit',
+    html: c => `<p>With one step per episode this is a contextual bandit, and the start position is the context. Start with the score-vector panel.</p>
+<p>Each score vector is ${m('(𝟙[→] − p)·φ(x)')} with ${m('φ(x) = (x/3, 1)')}, so it always points along φ(x). Its direction tells you where the agent stood, its sign which way it moved, and its length how unlikely that move was.</p>
+<p>The dashed arrow is the score of the move not taken. The two always point in opposite directions with lengths in the ratio ${m('(1−p) : p')}, so the probability-weighted average is zero in every state. That is why REINFORCE is unbiased.</p>
+<p class="tryit">Step through episodes with ‹ ›. Starts far from the goal give long, steep arrows; starts near x = 0 give nearly vertical ones.</p>` },
+  { id: 'scene-2', name: 'Many episodes', cfg: { H: 1, N: 50 }, th: [-1, 0.5],
+    title: 'From one estimate to an average',
+    html: c => `<p>Each orange dot is one episode's gradient estimate: its score vector times its reward, drawn from θ at the arrow scale. The orange arrow is their average over the batch of ${c.N}.</p>
+<p>The black arrow is the exact gradient ∇J, computed by dynamic programming over all positions. The dashed arrow is the exact mean of the estimator; here it coincides with the black one.</p>
+<p class="tryit">Press Resample batch a few times, then change N: the orange arrow wanders around the black one, with error shrinking like 1/√N. Drag θ: the black arrow stays perpendicular to the contour bands.</p>` },
+  { id: 'scene-3', name: 'One start state', cfg: { H: 1, N: 50, S: 0 }, th: [-1, 0.5],
+    title: 'Estimates live in the span of the features',
+    html: c => `<p>Every episode now starts at x = 0, where ${m('φ(0) = (0, 1)')}. Every score vector is a multiple of that one feature vector, so every estimate lands on the vertical line through θ.</p>
+<p>In general a gradient estimate can only point in directions spanned by the features of the states the episode visited. A bandit with a single context can only adjust θ₂ here.</p>
+<p class="tryit">Raise the start range S, or raise H to 2 or 3: the agent reaches other positions, and the cloud spreads into two dimensions.</p>` },
+  { id: 'scene-4', name: 'Several steps', cfg: { H: 6 }, th: [-1, 0.5],
+    title: 'Building one episode’s estimate',
+    html: c => `<p>With H = ${c.H} the agent takes ${c.H} steps and ${rw(c)}. The violet chain is the selected episode's total gradient estimate, built one link per step; the links add tip to tail and end at that episode's dot.</p>
+${c.rewardMode === 'dense'
+  ? `<p>Link t is the score vector at step t times the future total reward ${m('Gₜ = rₜ + … + r' + sub(c.H - 1))}. Later steps have less reward ahead of them, so their links tend to be shorter.</p>`
+  : `<p>Link t is the score vector at step t times the future total reward Gₜ. With one reward at the end, Gₜ is that final reward for every t, so every link is its score vector scaled by the same number.</p>`}
+${c.c <= 0 ? '<p>Rewards are never positive here, so each link points against its score vector.</p>' : ''}
+<p class="tryit">Hover a table row to find its link, its position, its score vector and its credit column. ${c.rewardMode === 'dense' ? 'Switch the reward to “at the end only” and every link gets the same weight.' : 'Switch the reward to “after every step” and the links get different weights.'}</p>` },
+  { id: 'scene-6', name: 'Reward offset', live: true, cfg: { H: 6, N: 20, c: 10 }, th: [-1, 0.5],
+    title: 'Adding a constant to the reward',
+    html: c => `<p>A constant ${m('c = ' + (c.c > 0 ? '+' : '') + fmt(c.c, 0))} is added to ${c.rewardMode === 'dense' ? 'every reward' : 'the final reward'}. That adds ${m(c.rewardMode === 'dense' ? 'c·(H − t)' : 'c')} to each future total reward Gₜ, and the added term times the score vector has mean zero. So the dashed and black arrows don't move.</p>
+<p>The spread changes a lot. At this θ the tightest cloud comes at ${m('c ≈ ' + fmt(bestOffset(), 1))}, which roughly cancels the typical ${c.rewardMode === 'dense' ? 'future reward' : 'final reward'}.</p>
+<p class="tryit">Slide c and watch the spread readout. Choosing c well is the simplest kind of baseline.</p>` },
+  { id: 'scene-7', name: 'Discount by delay', cfg: { H: 8, N: 50, mode: 'delay', gamma: 0.5, rewardMode: 'dense' }, th: [-1, 0.5], alpha: 0.03,
+    title: 'Discounting by delay: less variance, some bias',
+    html: c => `<p>Each reward now credits earlier actions with weight ${m('γ^(k−t)')}, here with γ = ${c.gamma.toFixed(2)}, fading with the delay between action and reward. This is what most implementations do.${c.rewardMode === 'terminal' ? ' With the reward at the end only, as now, it simply shrinks the weight of early steps by ' + m('γ^(H−1−t)') + '.' : ''}</p>
+<p>The contours still show the undiscounted objective. The dashed arrow, the estimator's exact mean, has moved off the black arrow: this estimator is biased for J. In return the cloud is tighter.</p>
+<p class="tryit">Slide γ from 0 to 1 and watch the bias and spread readouts move in opposite directions.</p>` },
+  { id: 'scene-8', name: 'Discount from start', cfg: { H: 8, N: 50, mode: 'absolute', gamma: 0.7, rewardMode: 'dense' }, th: [-1, 0.5], alpha: 0.03,
+    title: 'Discounting from the start: a different objective',
+    html: c => `<p>Now the objective itself is discounted, ${m('J_γ = E[Σₖ γᵏ rₖ]')}, and the contours change to match. The policy gradient theorem's ${m('γᵗ')} factor makes each reward count with weight ${m('γᵏ')}, set by when it arrives, not by the delay.</p>
+${c.rewardMode === 'dense'
+  ? `<p>The estimator is unbiased again, for this objective. Rewards late in the episode barely count, so the late links of the chain shrink and the lower rows of the credit matrix fade. This scene pays a reward after every step; with one reward at the end, discounting from the start would only multiply J by ${m('γ^(H−1)')}.</p>`
+  : `<p>With the reward at the end only, as now, discounting from the start just multiplies J by ${m('γ^(H−1)')}: the contours keep their shape and every arrow shrinks by the same factor.</p>`}
+<p class="tryit">Switch between “by delay” and “from start” at the same γ. Compare the credit matrices: diagonals versus rows.</p>` },
+  { id: 'scene-9', name: 'Learning', cfg: { H: 6 }, th: [3, -2],
+    title: 'Following the noisy gradient',
+    html: c => `<p>This policy steps away from the goal: θ₁ > 0 means it moves right on the right and left on the left. Press Train. Each step draws a fresh batch of ${c.N} episode${c.N === 1 ? '' : 's'} and moves θ by ${m('α·ĝ')}.</p>
+<p>Progress is slow at first: a policy that pins the agent against a wall gets nearly the same return whatever θ is, so the gradient there is small. Then the path heads for the dashed line of policies that switch at the goal and runs out along it as the policy sharpens. The wobble in the path is the variance from the earlier scenes; roughly a third of the steps make J worse.</p>
+<p class="tryit">Raise N or lower α to smooth the path. Try a discounting mode and see where training settles.</p>` },
+];
+SCENES.forEach((s, i) => { s.id = 'scene-' + (i + 1); });
+
+// variance-minimising reward offset at the current theta, from a large fixed sample
+const BIGNZ = R.noise(9999);
+function bestOffset() {
+  const n = R.MAXN, b = R.batch(st.th, { ...st.cfg, N: n }, BIGNZ), mu = b.mean, ub = [0, 0];
+  b.eps.forEach(e => { ub[0] += e.u[0] / n; ub[1] += e.u[1] / n; });
+  let num = 0, den = 0;
+  b.eps.forEach(e => { const d0 = e.u[0] - ub[0], d1 = e.u[1] - ub[1]; num += (e.est[0] - mu[0]) * d0 + (e.est[1] - mu[1]) * d1; den += d0 * d0 + d1 * d1; });
+  return den > 0 ? st.cfg.c - num / den : st.cfg.c;
+}
+
+// which settings differ from the scene's starting point
+const LABELS = {
+  H: ['horizon', v => v], N: ['batch', v => v], S: ['starts', v => v === 0 ? 'x₀ = 0' : '±' + v], g: ['goal', v => fmt(v, 0)],
+  rewardMode: ['reward', v => v === 'dense' ? 'after every step' : 'at the end only'], c: ['offset', v => (v > 0 ? '+' : '') + fmt(v, 0)],
+  mode: ['discounting', v => ({ undiscounted: 'none', delay: 'by delay', absolute: 'from start' })[v]],
+  gamma: ['γ', v => v.toFixed(2)],
+};
+function renderNotes() {
+  const s = SCENES[st.scene], ref = { ...DEF, ...s.cfg }, c = st.cfg, diffs = [];
+  for (const k of Object.keys(LABELS)) {
+    if (k === 'gamma' && c.mode === 'undiscounted' && ref.mode === 'undiscounted') continue;
+    if (c[k] !== ref[k]) diffs.push(`${LABELS[k][0]} ${LABELS[k][1](ref[k])} → ${LABELS[k][1](c[k])}`);
+  }
+  $('noteBody').innerHTML = s.html(c);
+  $('noteDiff').hidden = diffs.length === 0;
+  $('noteDiffText').textContent = diffs.length ? `Changed from this scene: ${diffs.join(', ')}.` : '';
+}
+
+const st = {
+  th: [-1, 0.5], th0: [-1, 0.5], cfg: { ...DEF }, seed: 1, hover: -1,
+  scoreX: null, roundTurns: true, jitter: true, kFit: 1, scaleExp: 0, fit: 'cloud', alphaExp: Math.log10(DEF_ALPHA), path: [], training: false, scene: 0
+};
+let nz = R.noise(st.seed), B = null, TG = [0, 0], EG = [0, 0], Jv = 0;
+
+function compute() {
+  B = R.batch(st.th, st.cfg, nz);
+  TG = R.trueGrad(st.th, st.cfg);
+  EG = R.expectedEst(st.th, st.cfg);
+  Jv = R.J(st.th, st.cfg);
+  st.sel = clamp(st.sel, 0, st.cfg.N - 1);
+}
+function refit() {
+  let k;
+  {
+    const ns = B.eps.map(e => norm(e.est)).sort((a, b) => a - b);
+    const q = ns[Math.floor(0.8 * (ns.length - 1))];
+    k = q > 1e-9 ? 5.5 / q : 1;
+  }
+  st.kFit = k;
+}
+const kEff = () => st.kFit * Math.pow(2, st.scaleExp);
+const kText = () => Number(kEff().toPrecision(3)).toString();
+const SCORE_SCALE = 2;
+
+// ---------- colours ----------
+function cssVar(n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
+function parseColor(s) {
+  s = s.trim();
+  if (s[0] === '#') { const h = s.slice(1); return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16), 1]; }
+  const m = s.match(/[\d.]+/g).map(Number); return [m[0], m[1], m[2], m.length > 3 ? m[3] : 1];
+}
+const lerp = (a, b, t) => a + (b - a) * t;
+const mix = (c1, c2, t) => [lerp(c1[0], c2[0], t), lerp(c1[1], c2[1], t), lerp(c1[2], c2[2], t)];
+const rgb = c => `rgb(${c.map(v => Math.round(v)).slice(0, 3).join(',')})`;
+
+// ---------- heat map ----------
+let heat = { key: '', url: '' };
+function heatKey() {
+  const c = st.cfg;
+  return [c.H, c.S, c.g, c.rewardMode, c.c, c.mode === 'absolute' ? 'a' + c.gamma : 'u', document.documentElement.dataset.theme || '', matchMedia('(prefers-color-scheme: dark)').matches].join('|');
+}
+function computeHeat() {
+  const key = heatKey(); if (key === heat.key) return;
+  heat.key = key;
+  const G = 121, vals = new Float64Array(G * G);
+  for (let j = 0; j < G; j++) for (let i = 0; i < G; i++) {
+    const a = lerp(PL.x0, PL.x1, i / (G - 1)), b = lerp(PL.y1, PL.y0, j / (G - 1));
+    vals[j * G + i] = R.J([a, b], st.cfg);
+  }
+  const sorted = Float64Array.from(vals).sort();
+  const NB = 12, cuts = [];
+  for (let i = 1; i < NB; i++) cuts.push(sorted[Math.floor(i / NB * sorted.length)]);
+  const lo = parseColor(cssVar('--heat-lo')), hi = parseColor(cssVar('--heat-hi')), ln = parseColor(cssVar('--heat-line'));
+  const cols = []; for (let b = 0; b < NB; b++) cols.push(mix(lo, hi, b / (NB - 1)));
+  const S = 720, cv = document.createElement('canvas'); cv.width = cv.height = S;
+  const ctx = cv.getContext('2d'), img = ctx.createImageData(S, S), band = new Uint8Array(S * S);
+  for (let py = 0; py < S; py++) {
+    const gy = py / (S - 1) * (G - 1), j0 = Math.min(G - 2, Math.floor(gy)), fy = gy - j0;
+    for (let px = 0; px < S; px++) {
+      const gx = px / (S - 1) * (G - 1), i0 = Math.min(G - 2, Math.floor(gx)), fx = gx - i0;
+      const v = (vals[j0 * G + i0] * (1 - fx) + vals[j0 * G + i0 + 1] * fx) * (1 - fy) + (vals[(j0 + 1) * G + i0] * (1 - fx) + vals[(j0 + 1) * G + i0 + 1] * fx) * fy;
+      let b = 0; while (b < cuts.length && v > cuts[b]) b++;
+      band[py * S + px] = b;
+    }
+  }
+  for (let py = 0; py < S; py++) for (let px = 0; px < S; px++) {
+    const b = band[py * S + px];
+    let c = cols[b];
+    const edge = (px > 0 && band[py * S + px - 1] !== b) || (py > 0 && band[(py - 1) * S + px] !== b);
+    if (edge) c = mix(c, ln, ln[3]);
+    const o = (py * S + px) * 4; img.data[o] = c[0]; img.data[o + 1] = c[1]; img.data[o + 2] = c[2]; img.data[o + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  heat.url = cv.toDataURL('image/png');
+}
+
+// ---------- svg helpers ----------
+function arrow(x1, y1, x2, y2, o) {
+  const dx = x2 - x1, dy = y2 - y1, L = Math.hypot(dx, dy);
+  if (L < 0.8) return '';
+  const hl = Math.min(o.head || 11, L * 0.6), hw = hl * 0.42, ux = dx / L, uy = dy / L;
+  const bx = x2 - ux * hl, by = y2 - uy * hl, px = -uy * hw, py = ux * hw;
+  let s = '';
+  if (o.halo) s += `<line x1="${x1}" y1="${y1}" x2="${bx}" y2="${by}" stroke="var(--surface)" stroke-opacity="0.75" stroke-width="${(o.w || 2) + 3}" stroke-linecap="round"/>`;
+  s += `<line x1="${x1}" y1="${y1}" x2="${o.open ? bx : bx + ux}" y2="${o.open ? by : by + uy}" stroke="${o.color}" stroke-width="${o.w || 2}" stroke-linecap="round"${o.dash ? ` stroke-dasharray="${o.dash}"` : ''}${o.op ? ` opacity="${o.op}"` : ''}/>`;
+  s += `<path d="M${x2},${y2} L${bx + px},${by + py} L${bx - px},${by - py}Z" fill="${o.open ? 'var(--surface)' : o.color}" fill-opacity="${o.open ? 0.6 : 1}" stroke="${o.color}" stroke-width="${o.open ? 1.4 : 0.6}" stroke-linejoin="round"${o.op ? ` opacity="${o.op}"` : ''}/>`;
+  return s;
+}
+
+// ---------- parameter plane ----------
+function renderPlane() {
+  computeHeat();
+  const k = kEff(), th = st.th, c = st.cfg;
+  const ox = X(th[0]), oy = Y(th[1]);
+  const to = v => [X(th[0] + k * v[0]), Y(th[1] + k * v[1])];
+  let s = `<defs><clipPath id="clipP"><rect x="${PL.l}" y="${PL.t}" width="${PL.w}" height="${PL.h}"/></clipPath></defs>`;
+  s += `<image href="${heat.url}" x="${PL.l}" y="${PL.t}" width="${PL.w}" height="${PL.h}" preserveAspectRatio="none"/>`;
+  s += `<rect x="${PL.l}" y="${PL.t}" width="${PL.w}" height="${PL.h}" fill="none" stroke="var(--hair)"/>`;
+  for (let v = PL.x0; v <= PL.x1; v += 2) {
+    s += `<line x1="${X(v)}" y1="${PL.t + PL.h}" x2="${X(v)}" y2="${PL.t + PL.h + 4}" stroke="var(--muted)"/>`;
+    s += `<text x="${X(v)}" y="${PL.t + PL.h + 17}" text-anchor="middle" font-size="11" fill="var(--muted)">${fmt(v, 0)}</text>`;
+  }
+  for (let v = PL.y0; v <= PL.y1; v += 2) {
+    s += `<line x1="${PL.l - 4}" y1="${Y(v)}" x2="${PL.l}" y2="${Y(v)}" stroke="var(--muted)"/>`;
+    s += `<text x="${PL.l - 7}" y="${Y(v) + 4}" text-anchor="end" font-size="11" fill="var(--muted)">${fmt(v, 0)}</text>`;
+  }
+  s += `<text x="${PL.l + PL.w / 2}" y="${PL.t + PL.h + 34}" text-anchor="middle" font-size="12" fill="var(--ink-2)">θ₁  (weight on position x/3)</text>`;
+  s += `<text transform="translate(14 ${PL.t + PL.h / 2}) rotate(-90)" text-anchor="middle" font-size="12" fill="var(--ink-2)">θ₂  (bias toward →)</text>`;
+  s += `<g clip-path="url(#clipP)">`;
+  s += `<line x1="${X(0)}" y1="${PL.t}" x2="${X(0)}" y2="${PL.t + PL.h}" stroke="var(--ink)" stroke-opacity="0.12"/>`;
+  s += `<line x1="${PL.l}" y1="${Y(0)}" x2="${PL.l + PL.w}" y2="${Y(0)}" stroke="var(--ink)" stroke-opacity="0.12"/>`;
+  // policies that switch at the goal: theta2 = -theta1 * g / L, theta1 < 0; optimum lies out along this ray
+  {
+    const d = [-1, c.g / R.L];
+    let smax = -PL.x0;
+    if (d[1] > 0) smax = Math.min(smax, PL.y1 / d[1]); else if (d[1] < 0) smax = Math.min(smax, PL.y0 / d[1]);
+    const ex = X(smax * d[0]), ey = Y(smax * d[1]), sx = X(0), sy = Y(0);
+    const L = Math.hypot(ex - sx, ey - sy), ux = (ex - sx) / L, uy = (ey - sy) / L;
+    const hx = ex - ux * 3, hy = ey - uy * 3;
+    s += `<line x1="${sx}" y1="${sy}" x2="${hx - ux * 9}" y2="${hy - uy * 9}" stroke="var(--ink-2)" stroke-width="1.4" stroke-dasharray="6 4" opacity="0.8"/>`;
+    s += `<path d="M${hx},${hy} L${hx - ux * 11 - uy * 5},${hy - uy * 11 + ux * 5} L${hx - ux * 11 + uy * 5},${hy - uy * 11 - ux * 5}Z" fill="var(--ink-2)" opacity="0.9"/>`;
+    const cxp = PL.l + PL.w / 2, cyp = PL.t + PL.h / 2;
+    let px = -uy, py = ux;
+    const bx = hx - ux * 24, by = hy - uy * 24;
+    if (Math.hypot(bx + px * 14 - cxp, by + py * 14 - cyp) > Math.hypot(bx - px * 14 - cxp, by - py * 14 - cyp)) { px = -px; py = -py; }
+    const lx = bx + px * 14, ly = by + py * 14 + 4;
+    s += `<text x="${lx}" y="${ly}" text-anchor="${lx < cxp ? 'start' : 'end'}" font-size="12" font-weight="600" fill="var(--ink)" stroke="var(--surface)" stroke-width="3.5" paint-order="stroke">optimal θ</text>`;
+  }
+  // training path
+  if (st.path.length) {
+    const pts = st.path.concat([th]).map(p => `${X(p[0])},${Y(p[1])}`).join(' ');
+    s += `<polyline points="${pts}" fill="none" stroke="var(--ink)" stroke-width="1.4" stroke-opacity="0.75" stroke-linejoin="round"/>`;
+    const p0 = st.path[0];
+    s += `<circle cx="${X(p0[0])}" cy="${Y(p0[1])}" r="4" fill="var(--surface)" stroke="var(--ink)" stroke-width="1.4"/>`;
+  }
+  const showEst = st.scoreX === null;
+  if (showEst) {
+  // cloud
+  const N = B.eps.length, op = N > 150 ? 0.35 : N > 40 ? 0.5 : 0.7;
+  B.eps.forEach((e, i) => {
+    const [x, y] = to(e.est);
+    s += `<circle class="dot" data-i="${i}" cx="${x}" cy="${y}" r="3.4" fill="var(--mean)" fill-opacity="${op}" stroke="var(--surface)" stroke-width="0.8" stroke-opacity="0.8" style="cursor:pointer"/>`;
+  });
+  // chain for selected episode
+  const ep = B.eps[st.sel];
+  let cx = th[0], cy = th[1];
+  const joints = [[cx, cy]];
+  ep.contrib.forEach(v => { cx += k * v[0]; cy += k * v[1]; joints.push([cx, cy]); });
+  for (let t = 0; t < ep.contrib.length; t++) {
+    const a = joints[t], b = joints[t + 1];
+    const hl = st.hover === t;
+    const x1 = X(a[0]), y1 = Y(a[1]), x2 = X(b[0]), y2 = Y(b[1]);
+    if (hl) s += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="var(--surface)" stroke-width="8" stroke-linecap="round" opacity="0.8"/>`;
+    s += arrow(x1, y1, x2, y2, { color: 'var(--accent)', w: hl ? 4 : 2, head: hl ? 10 : 7 });
+    const L = Math.hypot(x2 - x1, y2 - y1);
+    if (L > 22 || hl) {
+      const mx = (x1 + x2) / 2, my = (y1 + y2) / 2, nx = -(y2 - y1) / (L || 1), ny = (x2 - x1) / (L || 1);
+      s += `<text x="${mx + nx * 10}" y="${my + ny * 10 + 4}" text-anchor="middle" font-size="${hl ? 13 : 11}" font-weight="${hl ? 600 : 500}" fill="var(--accent)" stroke="var(--surface)" stroke-width="3" paint-order="stroke">${t}</text>`;
+    }
+  }
+  const end = joints[joints.length - 1];
+  s += `<circle cx="${X(end[0])}" cy="${Y(end[1])}" r="6" fill="none" stroke="var(--accent)" stroke-width="2"/>`;
+  // arrows
+  s += arrow(ox, oy, ...to(B.mean), { color: 'var(--mean)', w: 3, head: 13, halo: true });
+  s += arrow(ox, oy, ...to(EG), { color: 'var(--ink)', w: 1.8, head: 12, open: true, dash: '5 3.5' });
+  s += arrow(ox, oy, ...to(TG), { color: 'var(--ink)', w: 2.6, head: 13, halo: true });
+  } else {
+    for (const act of [1, 0]) {
+      const v = R.score(th, st.scoreX, act), tx = X(th[0] + SCORE_SCALE * v[0]), ty = Y(th[1] + SCORE_SCALE * v[1]);
+      const col = act ? 'var(--right)' : 'var(--left)';
+      s += arrow(ox, oy, tx, ty, { color: col, w: 2.6, head: 12, halo: true });
+      const L = Math.hypot(tx - ox, ty - oy) || 1;
+      s += `<text x="${tx + (tx - ox) / L * 11}" y="${ty + (ty - oy) / L * 11 + 5}" text-anchor="middle" font-size="14" font-weight="700" fill="${col}" stroke="var(--surface)" stroke-width="3.5" paint-order="stroke">${act ? '→' : '←'}</text>`;
+    }
+  }
+  s += `</g>`;
+  s += `<circle cx="${ox}" cy="${oy}" r="6" fill="var(--ink)" stroke="var(--surface)" stroke-width="2.2" style="cursor:grab"/>`;
+  s += `<text x="${ox - 9}" y="${oy - 9}" text-anchor="end" font-size="13" font-weight="600" fill="var(--ink)" stroke="var(--surface)" stroke-width="3" paint-order="stroke">θ</text>`;
+  $('plane').innerHTML = s;
+  $('plotTitle').innerHTML = showEst
+    ? `Gradient terms × <span>${kText()}</span>`
+    : `x = ${fmt(st.scoreX, 0)} score vectors × <span>${SCORE_SCALE}</span>`;
+  document.querySelectorAll('.legend .lg-est').forEach(el => { el.hidden = !showEst; });
+  $('legScore').hidden = showEst;
+  $('scale').disabled = !showEst;
+  $('objName').textContent = c.mode === 'absolute' ? 'J_γ(θ)' : 'J(θ)';
+}
+
+// ---------- trajectories ----------
+function renderTraj() {
+  const c = st.cfg, W = R.W, H = c.H;
+  const yy = p => 24 + (W - p) * 19.2;
+  const x0 = 78, x1 = 388, xx = t => x0 + t / H * (x1 - x0);
+  const mid = parseColor(cssVar('--mid')), rc = parseColor(cssVar('--right')), lc = parseColor(cssVar('--left'));
+  let s = `<text x="22" y="11" text-anchor="middle" font-size="11" fill="var(--ink-2)">π(→|x)</text>`;
+  s += `<text x="62" y="11" text-anchor="end" font-size="11" fill="var(--ink-2)">x</text>`;
+  for (let p = W; p >= -W; p--) {
+    const pr = R.pRight(st.th, p);
+    const col = pr >= 0.5 ? mix(mid, rc, (pr - 0.5) * 2) : mix(mid, lc, (0.5 - pr) * 2);
+    const strong = Math.abs(pr - 0.5) > 0.3;
+    s += `<rect x="4" y="${yy(p) - 8.6}" width="36" height="17.2" rx="2" fill="${rgb(col)}"/>`;
+    s += `<text x="22" y="${yy(p) + 4}" text-anchor="middle" font-size="10.5" font-family="var(--font-mono)" fill="${strong ? '#fff' : 'var(--ink)'}">${pr.toFixed(2).replace(/^0/, '')}</text>`;
+    s += `<text x="62" y="${yy(p) + 4}" text-anchor="end" font-size="10.5" fill="${p === c.g ? 'var(--goal)' : 'var(--muted)'}" font-weight="${p === c.g ? 600 : 400}">${fmt(p, 0)}</text>`;
+    s += `<line x1="${x0}" y1="${yy(p)}" x2="${x1}" y2="${yy(p)}" stroke="var(--grid)"/>`;
+  }
+  if (st.scoreX !== null) s += `<rect x="2" y="${yy(st.scoreX) - 10.6}" width="40" height="21.2" rx="3" fill="none" stroke="var(--ink)" stroke-width="1.6"/>`;
+  // start range bracket
+  s += `<line x1="${x0 - 7}" y1="${yy(c.S) - 4}" x2="${x0 - 7}" y2="${yy(-c.S) + 4}" stroke="var(--ink-2)" stroke-width="2.5" stroke-linecap="round" opacity="0.6"><title>start positions</title></line>`;
+  s += `<line x1="${x0}" y1="${yy(c.g)}" x2="${x1}" y2="${yy(c.g)}" stroke="var(--goal)" stroke-width="1.6" stroke-dasharray="5 3"/>`;
+  s += `<text x="${x1}" y="${yy(c.g) - 4}" text-anchor="end" font-size="10.5" fill="var(--goal)" font-weight="600" stroke="var(--surface)" stroke-width="3" paint-order="stroke">goal</text>`;
+  const by = yy(-W) + 14;
+  const tstep = H > 8 ? 2 : 1;
+  for (let t = 0; t <= H; t += tstep) s += `<text x="${xx(t)}" y="${by + 4}" text-anchor="middle" font-size="10.5" fill="var(--muted)">${t}</text>`;
+  s += `<text x="${(x0 + x1) / 2}" y="${by + 20}" text-anchor="middle" font-size="11.5" fill="var(--ink-2)">time step t</text>`;
+  const N = B.eps.length, op = clamp(6 / N, 0.06, 0.5);
+  // optional: per-episode vertical offset, and rounded corners so a turn is distinguishable from a crossing
+  const jit = i => st.jitter ? (((i * 0.6180339887) % 1) - 0.5) * 9 : 0;
+  const F = 0.2;
+  const pts = (e, i) => e.xs.map((x, t) => [xx(t), yy(x) + jit(i)]);
+  function pathD(P) {
+    if (!st.roundTurns || P.length < 3) return 'M' + P.map(p => p.join(',')).join(' L');
+    let d = `M${P[0][0]},${P[0][1]}`;
+    for (let k = 1; k < P.length - 1; k++) {
+      const p = P[k], a = [p[0] + (P[k - 1][0] - p[0]) * F, p[1] + (P[k - 1][1] - p[1]) * F], b = [p[0] + (P[k + 1][0] - p[0]) * F, p[1] + (P[k + 1][1] - p[1]) * F];
+      d += ` L${a[0]},${a[1]} Q${p[0]},${p[1]} ${b[0]},${b[1]}`;
+    }
+    const l = P[P.length - 1]; return d + ` L${l[0]},${l[1]}`;
+  }
+  // where a node marker sits: on the rounded curve when corners are rounded
+  function nodeAt(P, k) {
+    if (!st.roundTurns || k === 0 || k === P.length - 1) return P[k];
+    const p = P[k], q0 = P[k - 1], q1 = P[k + 1];
+    return [p[0] + 0.25 * F * (q0[0] - p[0] + q1[0] - p[0]), p[1] + 0.25 * F * (q0[1] - p[1] + q1[1] - p[1])];
+  }
+  let g = '';
+  B.eps.forEach((e, i) => { g += `<path d="${pathD(pts(e, i))}" fill="none" stroke="var(--ink)" stroke-opacity="${op}" stroke-width="1.6" stroke-linejoin="round"/>`; });
+  s += g;
+  const ep = B.eps[st.sel], SP = pts(ep, st.sel);
+  s += `<path d="${pathD(SP)}" fill="none" stroke="var(--surface)" stroke-width="5" stroke-opacity="0.7" stroke-linejoin="round"/>`;
+  s += `<path d="${pathD(SP)}" fill="none" stroke="var(--accent)" stroke-width="2.6" stroke-linejoin="round"/>`;
+  ep.xs.forEach((x, t) => {
+    const hl = st.hover === t, [cx, cy] = nodeAt(SP, t);
+    s += `<circle cx="${cx}" cy="${cy}" r="${hl ? 6 : 3.6}" fill="${hl ? 'var(--surface)' : 'var(--accent)'}" stroke="var(--accent)" stroke-width="${hl ? 2.5 : 1}"/>`;
+  });
+  $('traj').innerHTML = s;
+  $('epNum').textContent = `${st.sel + 1} / ${N}`;
+  $('epRet').textContent = fmt(ep.ret, 0);
+}
+
+// ---------- score inset ----------
+function renderScore() {
+  const ep = B.eps[st.sel], cx = 100, cy = 100;
+  let mx = 0.05;
+  ep.xs.slice(0, -1).forEach((x, t) => { mx = Math.max(mx, norm(R.score(st.th, x, 0)), norm(R.score(st.th, x, 1))); });
+  const ext = [0.25, 0.5, 1, 1.5, 2, 2.5].find(e => e >= mx) || 2.5;
+  const step = ext <= 0.5 ? 0.125 : ext <= 1 ? 0.25 : 0.5;
+  const sc = 76 / ext;
+  const P = v => [cx + v[0] * sc, cy - v[1] * sc];
+  let s = '';
+  const nl = Math.round(ext / step);
+  for (let i = -nl; i <= nl; i++) {
+    const v = i * step;
+    s += `<line x1="${cx + v * sc}" y1="${cy - ext * sc}" x2="${cx + v * sc}" y2="${cy + ext * sc}" stroke="${i === 0 ? 'var(--muted)' : 'var(--grid)'}"${i === 0 ? ' stroke-opacity="0.6" stroke-width="1.3"' : ''}/>`;
+    s += `<line x1="${cx - ext * sc}" y1="${cy - v * sc}" x2="${cx + ext * sc}" y2="${cy - v * sc}" stroke="${i === 0 ? 'var(--muted)' : 'var(--grid)'}"${i === 0 ? ' stroke-opacity="0.6" stroke-width="1.3"' : ''}/>`;
+  }
+  $('scoreGrid').textContent = String(step);
+  s += `<text x="${cx + ext * sc}" y="${cy - 5}" text-anchor="end" font-size="10" fill="var(--muted)">θ₁</text>`;
+  s += `<text x="${cx + 5}" y="${cy - ext * sc + 9}" font-size="10" fill="var(--muted)">θ₂</text>`;
+  const labels = new Map();
+  ep.sc.forEach((v, t) => {
+    const x = ep.xs[t], a = ep.as[t], alt = R.score(st.th, x, 1 - a), hl = st.hover === t;
+    s += arrow(cx, cy, ...P(alt), { color: 'var(--accent)', w: hl ? 1.8 : 1.1, head: 6, open: true, dash: '3 2.5', op: hl ? 0.9 : 0.5 });
+  });
+  ep.sc.forEach((v, t) => {
+    const hl = st.hover === t;
+    const [x2, y2] = P(v);
+    s += arrow(cx, cy, x2, y2, { color: 'var(--accent)', w: hl ? 3.2 : 1.8, head: hl ? 9 : 7 });
+    const key = `${Math.round(x2)},${Math.round(y2)}`;
+    if (!labels.has(key)) labels.set(key, { x: x2, y: y2, ts: [] });
+    labels.get(key).ts.push(t);
+  });
+  labels.forEach(l => {
+    const dx = l.x - cx, dy = l.y - cy, L = Math.hypot(dx, dy) || 1;
+    const hl = l.ts.includes(st.hover);
+    s += `<text x="${l.x + dx / L * 10}" y="${l.y + dy / L * 10 + 3.5}" text-anchor="middle" font-size="10" font-weight="${hl ? 700 : 500}" fill="var(--accent)" stroke="var(--surface)" stroke-width="3" paint-order="stroke">${l.ts.join(',')}</text>`;
+  });
+  $('score').innerHTML = s;
+}
+
+// ---------- credit matrix ----------
+function renderCredit() {
+  const c = st.cfg, H = c.H;
+  const cs = Math.min(18, 150 / H), ox = 40, oy = 34;
+  let s = `<text x="${ox}" y="12" text-anchor="start" font-size="10.5" fill="var(--ink-2)">action step t →</text>`;
+  s += `<text transform="translate(10 ${oy}) rotate(90)" text-anchor="start" font-size="10.5" fill="var(--ink-2)">reward step k →</text>`;
+  for (let t = 0; t < H; t++) {
+    if (H <= 8 || t % 2 === 0) {
+      s += `<text x="${ox + (t + 0.5) * cs}" y="${oy - 6}" text-anchor="middle" font-size="9.5" fill="var(--muted)">${t}</text>`;
+      s += `<text x="${ox - 5}" y="${oy + (t + 0.5) * cs + 3.5}" text-anchor="end" font-size="9.5" fill="var(--muted)">${t}</text>`;
+    }
+  }
+  for (let k = 0; k < H; k++) for (let t = 0; t < H; t++) {
+    const w = R.weight(c, t, k);
+    s += `<rect x="${ox + t * cs + 0.5}" y="${oy + k * cs + 0.5}" width="${cs - 1}" height="${cs - 1}" rx="1.5" fill="var(--accent)" fill-opacity="${w.toFixed(3)}" stroke="var(--hair)"><title>reward ${k} → action ${t}: weight ${w.toFixed(3)}</title></rect>`;
+  }
+  if (st.hover >= 0 && st.hover < H) s += `<rect x="${ox + st.hover * cs - 1}" y="${oy - 1}" width="${cs + 2}" height="${cs * H + 2}" fill="none" stroke="var(--ink)" stroke-width="1.6" rx="2"/>`;
+  $('credit').innerHTML = s;
+  let cap;
+  if (c.mode === 'undiscounted') cap = 'Cell = 1 when k ≥ t: each action is credited with the rewards that follow it.';
+  else if (c.mode === 'delay') cap = 'Cell = γ<sup>k−t</sup> when k ≥ t: credit fades with the delay between action and reward.';
+  else cap = 'Cell = γ<sup>k</sup> when k ≥ t: credit depends on when the reward arrives.';
+  $('creditCap').innerHTML = `Weight of reward k on action t. ${cap}`;
+}
+
+// ---------- MDP diagram ----------
+// example episode under an optimal policy: head for the goal, then step past it and back
+function optimalPath(c) {
+  const W = R.W;
+  const x0 = Math.abs(-c.S - c.g) >= Math.abs(c.S - c.g) ? -c.S : c.S;
+  const xs = [x0];
+  let x = x0;
+  const away = c.g >= x0 ? 1 : -1;   // direction of travel, kept when stepping past the goal
+  for (let t = 0; t < c.H; t++) {
+    let a;
+    if (x < c.g) a = 1; else if (x > c.g) a = 0;
+    else { const nx = x + away; a = (nx > W || nx < -W) ? (away > 0 ? 0 : 1) : (away > 0 ? 1 : 0); }
+    x = R.move(x, a); xs.push(x);
+  }
+  return xs;
+}
+function renderMDP() {
+  const c = st.cfg, W = R.W;
+  const xs = optimalPath(c), seen = new Map(), steps = [];
+  for (let t = 0; t < c.H; t++) {
+    const a = xs[t], b = xs[t + 1], key = a === b ? 'w' + a : Math.min(a, b) + ':' + Math.max(a, b);
+    const k = seen.get(key) || 0; seen.set(key, k + 1); steps.push({ t, a, b, k });
+  }
+  const maxK = steps.reduce((m, s) => Math.max(m, s.k), 0);
+  const apex = k => 12 + 9 * k;
+  const yS = apex(maxK) + 16, yR = yS + 30, Ht = yR + 10;
+  const sx = x => 16 + (x + W) * (248 / (2 * W));
+  const mid = parseColor(cssVar('--mid')), gc = parseColor(cssVar('--goal'));
+  $('mdp').setAttribute('viewBox', `0 0 280 ${Ht}`);
+  let s = '';
+  s += `<line x1="${sx(-W) - 8}" y1="${yS}" x2="${sx(W) + 8}" y2="${yS}" stroke="var(--muted)" stroke-opacity="0.6"/>`;
+  s += `<line x1="${sx(-W) - 8}" y1="${yS - 9}" x2="${sx(-W) - 8}" y2="${yS + 9}" stroke="var(--ink-2)" stroke-width="2.5"/><line x1="${sx(W) + 8}" y1="${yS - 9}" x2="${sx(W) + 8}" y2="${yS + 9}" stroke="var(--ink-2)" stroke-width="2.5"/>`;
+  // arcs: a repeated crossing of the same pair of states becomes a taller, wider loop
+  let arcs = '', labels = '';
+  const y1 = yS - 6.5;
+  for (const { t, a, b, k } of steps) {
+    const h = apex(k), hc = h / 0.75;
+    let x1, x2, w;
+    // arrival point slides along the top of the node so repeated arrowheads don't coincide
+    const JIT = [0, 2.6, -2.6, 4.6, -4.6, 1.3, -1.3, 3.6, -3.6];
+    const onCircle = dx => yS - Math.sqrt(Math.max(0, 6.8 * 6.8 - dx * dx));
+    let ya, yb;
+    if (a === b) { x1 = sx(a) - 3; x2 = sx(a) + 3; w = 6 + 3 * k; ya = yb = y1; }
+    else {
+      const dir = b > a ? 1 : -1, dj = -dir * 2 + JIT[k % JIT.length];
+      x1 = sx(a) + dir * 2; x2 = sx(b) + dj; w = dir * 5 * k;
+      ya = onCircle(dir * 2); yb = onCircle(dj);
+    }
+    const c1x = x1 - w, c2x = x2 + w, cy = Math.min(ya, yb) - hc;
+    arcs += `<g opacity="0.75"><path d="M${x1},${ya} C${c1x},${cy} ${c2x},${cy} ${x2},${yb}" fill="none" stroke="var(--ink-2)" stroke-width="1.4"/>`;
+    const tx = x2 - c2x, ty = yb - cy, tl = Math.hypot(tx, ty), ux = tx / tl, uy = ty / tl;
+    arcs += `<path d="M${x2},${yb} L${x2 - ux * 6 - uy * 3},${yb - uy * 6 + ux * 3} L${x2 - ux * 6 + uy * 3},${yb - uy * 6 - ux * 3}Z" fill="var(--ink-2)"/></g>`;
+  }
+  for (let x = -W; x <= W; x++) {
+    const isStart = Math.abs(x) <= c.S, isGoal = x === c.g, first = x === xs[0];
+    const fill = isGoal ? 'var(--goal)' : first ? 'var(--ink-2)' : 'var(--surface)';
+    s += `<circle cx="${sx(x)}" cy="${yS}" r="6" fill="${fill}" stroke="${isGoal ? 'var(--goal)' : 'var(--ink-2)'}" stroke-width="${isStart ? 1.6 : 1}"${isStart || isGoal ? '' : ' stroke-dasharray="2 1.6" stroke-opacity="0.7"'}/>`;
+    s += `<text x="${sx(x)}" y="${yS + 17}" text-anchor="middle" font-size="8.5" fill="${isGoal ? 'var(--goal)' : 'var(--muted)'}" font-weight="${isGoal ? 700 : 400}">${fmt(x, 0)}</text>`;
+  }
+  s += arcs + labels;
+  const rv = x => -Math.abs(x - c.g) + c.c;
+  let rmin = Infinity, rmax = -Infinity;
+  for (let x = -W; x <= W; x++) { rmin = Math.min(rmin, rv(x)); rmax = Math.max(rmax, rv(x)); }
+  s += `<line x1="${sx(-W)}" y1="${yR}" x2="${sx(W)}" y2="${yR}" stroke="var(--muted)" stroke-width="0.8" stroke-opacity="0.7"/>`;
+  for (let x = -W; x <= W; x++) {
+    const f = (rv(x) - rmin) / (rmax - rmin || 1);
+    s += `<circle cx="${sx(x)}" cy="${yR}" r="4.2" fill="${rgb(mix(mid, gc, f))}" stroke="var(--hair)"><title>reward ${fmt(rv(x), 0)}</title></circle>`;
+  }
+  $('mdp').innerHTML = s;
+  const when = c.rewardMode === 'dense' ? 'for landing on each state, after every step' : 'for ending on each state, paid once at the end';
+  $('mdpCap').innerHTML = `Arcs: one episode of ${c.H} step${c.H === 1 ? '' : 's'} under an optimal policy, starting at x = ${fmt(xs[0], 0)}; later passes between the same two states loop higher. Solid circles: possible start states (±${c.S}); dashed: reachable only by walking. Bottom row: reward ${when}, from ${fmt(rmin, 0)} (light) to ${fmt(rmax, 0)} (dark, at the goal).`;
+}
+
+// ---------- table ----------
+function renderTable() {
+  const ep = B.eps[st.sel];
+  let h = `<thead><tr><th>t</th><th>xₜ</th><th>action</th><th>π(aₜ | xₜ)</th><th>rₜ</th><th title="Weighted reward credited to this step, per the credit matrix">Gₜ</th><th>score ∇log π</th><th>Gₜ · score</th></tr></thead><tbody>`;
+  ep.as.forEach((a, t) => {
+    h += `<tr data-t="${t}"${st.hover === t ? ' class="hl"' : ''}><td>${t}</td><td>${fmt(ep.xs[t], 0)}</td><td>${a ? '→' : '←'}</td><td>${ep.ps[t].toFixed(2)}</td><td>${fmt(ep.rs[t], 0)}</td><td>${fmt(ep.G[t], 2)}</td><td>${fv(ep.sc[t])}</td><td>${fv(ep.contrib[t])}</td></tr>`;
+  });
+  h += `</tbody><tfoot><tr><td>Σ</td><td></td><td></td><td></td><td>${fmt(ep.ret, 0)}</td><td></td><td></td><td>ĝ = ${fv(ep.est)}</td></tr></tfoot>`;
+  $('table').innerHTML = h;
+}
+
+// ---------- stats ----------
+function renderStats() {
+  const c = st.cfg, bias = Math.hypot(EG[0] - TG[0], EG[1] - TG[1]);
+  const ang = (norm(B.mean) > 1e-12 && norm(TG) > 1e-12) ? Math.acos(clamp((B.mean[0] * TG[0] + B.mean[1] * TG[1]) / norm(B.mean) / norm(TG), -1, 1)) * 180 / Math.PI : 0;
+  const items = [
+    [c.mode === 'absolute' ? 'J_γ(θ)' : 'J(θ)', fmt(Jv, 2)],
+    ['‖∇J‖ exact', fmt(norm(TG), 2)],
+    ['batch average ĝ', fv(B.mean, 2)],
+    ['spread of one episode', fmt(B.sd, 2)],
+    [`std. error of ĝ (N=${c.N})`, fmt(B.sd / Math.sqrt(c.N), 2)],
+    ['bias ‖E[ĝ] − ∇J‖', fmt(bias, 2), bias > 1e-6],
+    ['angle ĝ vs ∇J', `${ang.toFixed(0)}°`],
+  ];
+  $('stats').innerHTML = items.map(([k, v, f]) => `<div class="stat${f ? ' flag' : ''}"><span class="k">${k}</span><span class="v">${v}</span></div>`).join('');
+}
+
+function render() {
+  renderPlane(); renderTraj(); renderScore(); renderCredit(); renderTable(); renderStats(); renderMDP();
+  if (SCENES[st.scene].live || renderNotes.dirty) { renderNotes(); renderNotes.dirty = false; }
+}
+function renderHover() {
+  renderPlane(); renderTraj(); renderScore(); renderCredit();
+  document.querySelectorAll('#table tbody tr').forEach(tr => tr.classList.toggle('hl', +tr.dataset.t === st.hover));
+}
+let raf = 0;
+function schedule(fn) { if (raf) return; raf = requestAnimationFrame(() => { raf = 0; fn(); }); }
+
+// ---------- controls ----------
+const RANGE_KEYS = ['H', 'N', 'S', 'g', 'c', 'gamma'];
+function syncControls() {
+  const c = st.cfg;
+  RANGE_KEYS.forEach(k => { $(k).value = c[k]; });
+  $('H_o').textContent = c.H; $('N_o').textContent = c.N; $('S_o').textContent = c.S === 0 ? 'x₀ = 0' : `±${c.S}`;
+  $('g_o').textContent = fmt(c.g, 0); $('c_o').textContent = (c.c > 0 ? '+' : '') + fmt(c.c, 0); $('gamma_o').textContent = c.mode === 'undiscounted' ? '1 (off)' : c.gamma.toFixed(2);
+  $('gamma').disabled = c.mode === 'undiscounted';
+  document.querySelectorAll('input[name=rewardMode]').forEach(r => { r.checked = r.value === c.rewardMode; });
+  document.querySelectorAll('input[name=mode]').forEach(r => { r.checked = r.value === c.mode; });
+  $('scale').value = st.scaleExp; $('scale_o').textContent = kText();
+  $('alpha').value = st.alphaExp; $('alpha_o').textContent = Math.pow(10, st.alphaExp).toPrecision(2);
+  $('trainBtn').textContent = st.training ? 'Pause' : 'Train';
+}
+function onCfg(key) {
+  renderNotes.dirty = true;
+  compute();
+  syncControls(); render();
+}
+RANGE_KEYS.forEach(k => $(k).addEventListener('input', e => { st.cfg[k] = Number(e.target.value); schedule(() => onCfg(k)); }));
+['rewardMode', 'mode'].forEach(name => document.querySelectorAll(`input[name=${name}]`).forEach(r => r.addEventListener('change', () => { st.cfg[name] = r.value; onCfg(name); })));
+$('scale').addEventListener('input', e => { st.scaleExp = Number(e.target.value); syncControls(); schedule(render); });
+$('alpha').addEventListener('input', e => { st.alphaExp = Number(e.target.value); syncControls(); });
+$('resample').addEventListener('click', () => { st.seed++; nz = R.noise(st.seed); compute(); render(); });
+$('resetTheta').addEventListener('click', () => { stopTraining(); st.th = st.th0.slice(); st.path = []; compute(); syncControls(); render(); });
+$('clearPath').addEventListener('click', () => { st.path = []; render(); });
+function trainStep() {
+  const a = Math.pow(10, st.alphaExp);
+  st.path.push(st.th.slice());
+  if (st.path.length > 2000) st.path.shift();
+  st.th = [clamp(st.th[0] + a * B.mean[0], PL.x0, PL.x1), clamp(st.th[1] + a * B.mean[1], PL.y0, PL.y1)];
+  st.seed++; nz = R.noise(st.seed); compute(); render();
+}
+let timer = 0;
+function stopTraining() { st.training = false; clearInterval(timer); timer = 0; syncControls(); }
+$('stepBtn').addEventListener('click', () => { stopTraining(); trainStep(); });
+$('trainBtn').addEventListener('click', () => {
+  if (st.training) { stopTraining(); return; }
+  st.training = true; syncControls(); timer = setInterval(trainStep, 140);
+});
+$('scorePick').innerHTML = Array.from({ length: 2 * R.W + 1 }, (_, i) => i - R.W).map(v =>
+  `<label><input type="radio" name="scoreX" value="${v}">${fmt(v, 0)}</label>`).join('');
+document.querySelectorAll('input[name=scoreX]').forEach(r => r.addEventListener('change', () => { st.scoreX = r.value === 'off' ? null : Number(r.value); renderPlane(); renderTraj(); }));
+$('epPrev').addEventListener('click', () => { st.sel = (st.sel - 1 + B.eps.length) % B.eps.length; st.hover = -1; render(); });
+$('epNext').addEventListener('click', () => { st.sel = (st.sel + 1) % B.eps.length; st.hover = -1; render(); });
+$('epBest').addEventListener('click', () => { let b = 0; B.eps.forEach((e, i) => { if (e.ret > B.eps[b].ret) b = i; }); st.sel = b; render(); });
+$('epWorst').addEventListener('click', () => { let b = 0; B.eps.forEach((e, i) => { if (e.ret < B.eps[b].ret) b = i; }); st.sel = b; render(); });
+$('table').addEventListener('mouseover', e => { const tr = e.target.closest('tbody tr'); const t = tr ? +tr.dataset.t : -1; if (t !== st.hover) { st.hover = t; renderHover(); } });
+$('table').addEventListener('mouseleave', () => { st.hover = -1; renderHover(); });
+
+// plane interaction
+const plane = $('plane'), tip = $('tip');
+let dragging = false;
+function svgPt(e) { const p = plane.createSVGPoint(); p.x = e.clientX; p.y = e.clientY; return p.matrixTransform(plane.getScreenCTM().inverse()); }
+function setTheta(a, b) { st.th = [clamp(a, PL.x0, PL.x1), clamp(b, PL.y0, PL.y1)]; schedule(() => { compute(); render(); }); }
+plane.addEventListener('pointerdown', e => {
+  const d = e.target.closest('[data-i]');
+  if (d) { st.sel = +d.dataset.i; st.hover = -1; render(); return; }
+  const p = svgPt(e);
+  if (p.x < PL.l || p.x > PL.l + PL.w || p.y < PL.t || p.y > PL.t + PL.h) return;
+  stopTraining(); dragging = true; plane.setPointerCapture(e.pointerId); tip.style.display = 'none';
+  setTheta(IX(p.x), IY(p.y));
+});
+plane.addEventListener('pointermove', e => {
+  if (dragging) { const p = svgPt(e); setTheta(IX(p.x), IY(p.y)); return; }
+  const d = e.target.closest('[data-i]');
+  if (d) {
+    const ep = B.eps[+d.dataset.i];
+    tip.innerHTML = `episode ${+d.dataset.i + 1} · start x=${fmt(ep.xs[0], 0)} · return ${fmt(ep.ret, 0)}<br>ĝ = ${fv(ep.est)}`;
+    tip.style.display = 'block'; tip.style.left = (e.clientX + 14) + 'px'; tip.style.top = (e.clientY + 12) + 'px';
+  } else tip.style.display = 'none';
+});
+plane.addEventListener('pointerup', () => { dragging = false; });
+plane.addEventListener('pointercancel', () => { dragging = false; });
+plane.addEventListener('pointerleave', () => { tip.style.display = 'none'; });
+plane.addEventListener('keydown', e => {
+  const d = e.shiftKey ? 0.5 : 0.1, m = { ArrowLeft: [-d, 0], ArrowRight: [d, 0], ArrowUp: [0, d], ArrowDown: [0, -d] }[e.key];
+  if (!m) return; e.preventDefault(); setTheta(st.th[0] + m[0], st.th[1] + m[1]);
+});
+
+// ---------- scenes ----------
+// an episode with a clearly visible chain: estimate norm near the 75th percentile, with mixed actions if possible
+function typicalEpisode() {
+  const idx = B.eps.map((e, i) => i).sort((i, j) => norm(B.eps[i].est) - norm(B.eps[j].est));
+  const target = idx[Math.floor(0.75 * (idx.length - 1))];
+  const H = st.cfg.H;
+  if (H < 3) return target;
+  const tn = norm(B.eps[target].est);
+  let best = target, bd = Infinity;
+  B.eps.forEach((e, i) => { const mixed = e.as.some(a => a) && e.as.some(a => !a); if (!mixed) return; const d = Math.abs(norm(e.est) - tn); if (d < bd) { bd = d; best = i; } });
+  return best;
+}
+function applyScene(i, updateHash = true) {
+  stopTraining();
+  const s = SCENES[i];
+  st.scene = i; st.cfg = { ...DEF, ...s.cfg }; st.th = s.th.slice(); st.th0 = s.th.slice();
+  st.seed = s.seed || 1; nz = R.noise(st.seed); st.sel = 0; st.hover = -1;
+  st.scaleExp = 0; st.path = [];
+  st.alphaExp = Math.log10(s.alpha || DEF_ALPHA);
+  compute(); st.sel = typicalEpisode(); refit(); syncControls(); render();
+  $('noteTitle').textContent = s.title; renderNotes();
+  document.querySelectorAll('#scenes button').forEach((b, j) => b.setAttribute('aria-pressed', j === i ? 'true' : 'false'));
+  if (updateHash && location.hash !== '#' + s.id) { try { history.replaceState(null, '', '#' + s.id); } catch (e) { location.hash = s.id; } }
+}
+$('restoreScene').addEventListener('click', () => applyScene(st.scene));
+$('scenes').innerHTML = SCENES.map((s, i) => `<button type="button" data-s="${i}" aria-pressed="false"><span class="n">${i + 1}</span>${s.name}</button>`).join('');
+$('scenes').addEventListener('click', e => { const b = e.target.closest('button'); if (b) applyScene(+b.dataset.s); });
+function fromHash() { const i = SCENES.findIndex(s => '#' + s.id === location.hash); return i >= 0 ? i : 3; }
+window.addEventListener('hashchange', () => applyScene(fromHash(), false));
+
+// theme changes
+const rerenderTheme = () => { heat.key = ''; render(); };
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', rerenderTheme);
+new MutationObserver(rerenderTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+applyScene(fromHash(), false);
+})();
+
+</script>
+</body>
+</html>
