@@ -1,0 +1,797 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="Slides">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<title>PDF Slides</title>
+<link rel="icon" href="data:,">
+<style>
+  html, body {
+    margin: 0; height: 100%; overflow: hidden; background: #000;
+    font: 14px/1.2 -apple-system, system-ui, sans-serif; color: #eee;
+    -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+    overscroll-behavior: none; touch-action: none;
+  }
+  #app { position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; transform-origin: 0 0; overflow: hidden; }
+  #stage { position: fixed; inset: 0; touch-action: none; cursor: crosshair; }
+  #stage.eraser { cursor: cell; }
+  #stage canvas { position: absolute; pointer-events: none; }
+  #empty { position: absolute; inset: 0; display: grid; place-items: center; color: #888; text-align: center; }
+
+  #bar {
+    position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 2px; padding: 5px;
+    background: rgba(30,30,30,.92); border-radius: 14px; box-shadow: 0 4px 20px rgba(0,0,0,.5);
+    flex-wrap: wrap; justify-content: center; width: max-content; max-width: calc(100% - 32px); white-space: nowrap;
+  }
+  #bar button, #bar label {
+    font: inherit; color: inherit; background: none; border: 0; border-radius: 9px;
+    padding: 7px 8px; cursor: pointer; min-width: 32px;
+  }
+  #bar button:hover, #bar label:hover { background: rgba(255,255,255,.1); }
+  #bar button.on:not(.sw) { background: rgba(255,255,255,.22); }
+  #bar .sep { width: 1px; height: 22px; background: #555; margin: 0 3px; }
+  #bar .sw { width: 20px; height: 20px; min-width: 0; padding: 0; margin: 0 2px; border-radius: 50%; border: 2px solid #555; vertical-align: middle; box-sizing: border-box; }
+  #bar .sw.on { border-color: #fff; outline: 2px solid #fff; outline-offset: 1px; }
+  #bar .pick { position: relative; overflow: hidden; display: inline-block; vertical-align: middle; box-sizing: border-box;
+    background: radial-gradient(var(--c, #fff) 0 40%, transparent 44%), conic-gradient(#f44, #fd4, #4d4, #4dd, #44f, #d4d, #f44); }
+  #bar .pick input { position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; opacity: 0; cursor: pointer; }
+  #bar button:disabled { opacity: .35; cursor: default; background: none; }
+  #bar button:focus, #bar label:focus { outline: none; }   /* no focus ring left on the projector after clicking */
+  #bar svg { display: block; width: 18px; height: 18px; margin: 0 auto; }
+  #toast {
+    position: fixed; left: 50%; top: 16px; transform: translateX(-50%); z-index: 10;
+    width: max-content; max-width: min(560px, calc(100% - 32px)); padding: 12px 16px; border-radius: 12px;
+    background: rgba(30,30,30,.95); box-shadow: 0 4px 20px rgba(0,0,0,.5); line-height: 1.4;
+  }
+  #clearMenu {
+    position: absolute; bottom: calc(100% + 8px); display: flex; flex-direction: column; padding: 4px;
+    background: rgba(40,40,40,.98); border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,.6);
+  }
+  #clearMenu button { text-align: left; padding: 10px 14px; }
+  #clearAll { color: #ff6b6b !important; }
+  #page { min-width: 56px; text-align: center; color: #bbb; font-variant-numeric: tabular-nums; }
+  #picker {
+    position: fixed; inset: 0; z-index: 20; background: #0a0a0a;
+    overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; -webkit-overflow-scrolling: touch;
+  }
+  #pickerTop {
+    position: sticky; top: 0; z-index: 1; display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 16px; background: #0a0a0a; color: #bbb;
+  }
+  #pickerTop button { font: inherit; font-size: 20px; color: #eee; background: none; border: 0; padding: 4px 10px; cursor: pointer; }
+  #grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px; padding: 4px 20px 24px; }
+  #grid button { font: inherit; color: #999; background: none; border: 0; padding: 4px; border-radius: 8px; cursor: pointer; }
+  #grid button.current { color: #fff; background: rgba(66,133,244,.35); }
+  #grid button.sel { outline: 2px solid #fff; }
+  #grid .frame { position: relative; background: #333; margin-bottom: 4px; }
+  #grid img, #grid svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  #showbar {
+    position: fixed; right: 10px; bottom: 10px; width: 36px; height: 36px; border-radius: 50%;
+    border: 0; background: rgba(60,60,60,.5); color: #ccc; font-size: 18px; cursor: pointer;
+  }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div id="app">
+<div id="stage">
+  <div id="pdfHolder"></div>
+  <canvas id="ink"></canvas>
+  <canvas id="live"></canvas>
+  <div id="empty">Open a PDF to start<br><small>(or drop one here)</small></div>
+</div>
+
+<div id="bar">
+  <label title="Open PDF">Open<input id="file" type="file" accept="application/pdf" hidden></label>
+  <span class="sep"></span>
+  <button id="back10" title="Back 10 slides (Shift+←)">«</button>
+  <button id="prev" title="Previous (←)">‹</button>
+  <button id="page" title="Go to slide (G)">–</button>
+  <button id="next" title="Next (→)">›</button>
+  <button id="fwd10" title="Forward 10 slides (Shift+→)">»</button>
+  <span class="sep"></span>
+  <button data-tool="pen" title="Pen (P)">Pen</button>
+  <button data-tool="hl" title="Highlighter (H)">Highlight</button>
+  <button data-tool="eraser" title="Eraser (E)">Erase</button>
+  <button data-tool="laser" title="Laser pointer: strokes fade away (L)">Laser</button>
+  <span class="sep"></span>
+  <span id="swatches"></span>
+  <span class="sep"></span>
+  <button id="undo" title="Undo (Ctrl/⌘+Z)" aria-label="Undo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button>
+  <button id="redo" title="Redo (Ctrl/⌘+Shift+Z)" aria-label="Redo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg></button>
+  <button id="clear" title="Clear this slide (long-press or right-click for more)">Clear</button>
+  <div id="clearMenu" class="hidden">
+    <button id="clearOne">Clear this slide</button>
+    <button id="clearAll">Clear all slides</button>
+  </div>
+  <button id="export" title="Download the PDF with annotations">Export</button>
+  <span class="sep"></span>
+  <button id="screen2" title="Open a clean window for a second display">Screen 2</button>
+  <button id="fs" title="Fullscreen (F)">⛶</button>
+  <button id="hidebar" title="Hide toolbar (T)">×</button>
+</div>
+<button id="showbar" class="hidden" title="Show toolbar (T)">•••</button>
+<div id="toast" class="hidden"></div>
+<div id="picker" class="hidden">
+  <div id="pickerTop"><span>Go to slide</span><button id="closePicker" title="Close (Esc)">×</button></div>
+  <div id="grid"></div>
+</div>
+</div>
+
+<script type="module">
+import * as pdfjsLib from './pdfjs/pdf.min.mjs';
+pdfjsLib.GlobalWorkerOptions.workerSrc = './pdfjs/pdf.worker.min.mjs';
+const PDF_OPTS = { cMapUrl: './pdfjs/cmaps/', standardFontDataUrl: './pdfjs/standard_fonts/', wasmUrl: './pdfjs/wasm/' };
+
+// ---------- settings ----------
+const COLORS = ['#e53935', '#1e88e5', '#43a047', '#fdd835', '#000000'];   // presets; the last swatch is a colour picker
+const WIDTH = { pen: 0.003, hl: 0.022, laser: 0.004 };   // stroke width as a fraction of slide width
+const HL_ALPHA = 0.35;
+const ERASER_RADIUS = 12;                  // CSS pixels
+const LASER_HOLD = 667, LASER_FADE = 333;  // after the pen lifts: ms before laser strokes start fading, then fade length (1 s total)
+const CACHE_AHEAD = 2, CACHE_BEHIND = 1;   // pages pre-rendered around the current one
+const ROTATE_TO_FIT = false;               // iPad fullscreen/Home Screen: counter-rotate to keep slides largest (off: a mirrored display would show it sideways)
+const SCREEN2 = false;                     // set to true to show the "Screen 2" button (clean second-display window)
+
+// ---------- state ----------
+const audience = location.hash === '#audience';   // the clean second-screen window
+const $ = id => document.getElementById(id);
+const stage = $('stage'), pdfHolder = $('pdfHolder'), inkCv = $('ink'), liveCv = $('live');
+let pdf = null, loadingTask = null, docKey = null, docName = 'slides.pdf', cur = 1;
+let ink = {};            // page number -> array of strokes; stroke = {tool, color, w, pts:[x0,y0,x1,y1,...]} (0..1 coords)
+let undoStack = {}, redoStack = {};   // page number -> arrays of earlier / undone stroke arrays
+let tool = 'pen', color = { pen: COLORS[1], hl: COLORS[3], laser: COLORS[0] };   // blue pen, yellow highlighter, red laser
+let box = { w: 0, h: 0, left: 0, top: 0 };   // where the slide sits on screen (CSS px)
+const cache = new Map(); // page number -> Promise<canvas>
+const chan = new BroadcastChannel('pdf-slides');
+
+// ---------- loading ----------
+async function openPdf(data, key) {
+  if (loadingTask) loadingTask.destroy();
+  for (const p of cache.values()) p.then(release, () => {});
+  cache.clear();
+  pdf = null;
+  docKey = key; undoStack = {}; redoStack = {};
+  resetThumbs();
+  if (!audience) ink = loadInk();
+  loadingTask = pdfjsLib.getDocument({ data, ...PDF_OPTS });
+  pdf = await loadingTask.promise;
+  const vp = (await pdf.getPage(1)).getViewport({ scale: 1 });
+  deckAspect = vp.width / vp.height;
+  updateRotation(); cacheSize = appW + 'x' + appH;
+  $('empty').classList.add('hidden');
+  await show(audience ? cur : 1);
+}
+
+$('file').onchange = e => { const f = e.target.files[0]; if (f) openFile(f); e.target.value = ''; };
+addEventListener('dragover', e => e.preventDefault());
+addEventListener('drop', e => {
+  e.preventDefault();
+  const f = [...e.dataTransfer.files].find(f => f.type === 'application/pdf');
+  if (f && !audience) openFile(f);
+});
+async function openFile(f) {
+  await openPdf(new Uint8Array(await f.arrayBuffer()), 'pdf-slides:' + f.name + ':' + f.size);
+  docName = f.name;
+  sendDoc();                                      // in case a second-screen window is open
+}
+
+// ---------- rendering & instant page changes ----------
+function fit(vp) {        // largest size that fits the window, keeping aspect ratio
+  const s = Math.min(appW / vp.width, appH / vp.height);
+  return { w: Math.floor(vp.width * s), h: Math.floor(vp.height * s) };
+}
+
+function render(n) {      // returns a cached promise of a ready-to-show canvas
+  if (!cache.has(n)) cache.set(n, (async () => {
+    const page = await pdf.getPage(n);
+    const vp1 = page.getViewport({ scale: 1 });
+    const { w, h } = fit(vp1);
+    const dpr = devicePixelRatio || 1;
+    const viewport = page.getViewport({ scale: (w * dpr) / vp1.width });
+    const c = document.createElement('canvas');
+    c.width = Math.round(viewport.width); c.height = Math.round(viewport.height);
+    c.style.width = w + 'px'; c.style.height = h + 'px';
+    c.cssW = w; c.cssH = h;
+    await page.render({ canvas: c, viewport }).promise;
+    return c;
+  })());
+  return cache.get(n);
+}
+const release = c => { if (c && c.parentNode !== pdfHolder) c.width = c.height = 0; }; // frees memory promptly in Safari
+
+async function show(n) {
+  if (!pdf) return;
+  n = Math.max(1, Math.min(pdf.numPages, n));
+  cur = n;
+  $('page').textContent = `${n} / ${pdf.numPages}`;
+  if (!audience) sync();
+  const c = await render(n).catch(err => (console.error(err), null));
+  if (n !== cur || !c) return;            // user already moved on
+  box = { w: c.cssW, h: c.cssH, left: (appW - c.cssW) / 2, top: (appH - c.cssH) / 2 };
+  for (const el of [c, inkCv, liveCv]) { el.style.left = box.left + 'px'; el.style.top = box.top + 'px'; }
+  if (c.style.position !== 'absolute') c.style.position = 'absolute';
+  pdfHolder.replaceChildren(c);
+  sizeCanvas(inkCv); sizeCanvas(liveCv);
+  drawInk(); updateUndoButtons();
+  laser = []; stopLaserFade(); paintLive([], 1, null);
+  // pre-render neighbours, drop far-away pages
+  for (const [k, p] of cache) if (k < n - CACHE_BEHIND - 1 || k > n + CACHE_AHEAD + 1) { cache.delete(k); p.then(release, () => {}); }
+  const near = [];
+  for (let k = 1; k <= CACHE_AHEAD; k++) near.push(n + k);
+  for (let k = 1; k <= CACHE_BEHIND; k++) near.push(n - k);
+  for (const k of near) {
+    if (cur !== n || !pdf) return;                // moved on: the newer show() takes over
+    if (k >= 1 && k <= pdf.numPages) await render(k).catch(() => {});
+  }
+}
+const go = d => show(cur + d);
+
+let resizeTimer, cacheSize = '';
+function onViewportChange() {
+  updateRotation();                      // immediately, so a counter-rotation shows no flash
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    if (!pdf || appW + 'x' + appH === cacheSize) return;   // same size (e.g. just counter-rotated): nothing to redraw
+    cacheSize = appW + 'x' + appH;
+    for (const p of cache.values()) p.then(release, () => {});
+    cache.clear(); show(cur);
+  }, 150);
+}
+addEventListener('resize', onViewportChange);
+document.addEventListener('fullscreenchange', onViewportChange);
+document.addEventListener('webkitfullscreenchange', onViewportChange);
+
+// ---------- rotate to fit: like rotation lock, on iPad in fullscreen or as a Home Screen app ----------
+// If the device turns so the slide would get smaller, rotate the app by 90° the other way so the slide
+// stays where it was relative to the device. Turning between the two landscape (or portrait) positions
+// still flips the slide upright as usual. (Safari doesn't let pages lock the screen orientation.)
+let rot = 0, goodAngle = null, appW = innerWidth, appH = innerHeight, deckAspect = 0;
+const screenAngle = () => (((screen.orientation?.angle ?? window.orientation ?? 0) % 360) + 360) % 360;
+function updateRotation() {
+  const vw = innerWidth, vh = innerHeight;
+  const fullscreen = document.fullscreenElement || document.webkitFullscreenElement;
+  let r = 0;
+  if (ROTATE_TO_FIT && isIPad && !audience && (isHomeScreenApp || fullscreen) && deckAspect) {
+    const upright = Math.min(vw / deckAspect, vh), sideways = Math.min(vh / deckAspect, vw);   // slide height either way
+    if (sideways <= upright * 1.02) goodAngle = screenAngle();
+    else {
+      const turned = goodAngle === null ? 270 : (screenAngle() - goodAngle + 360) % 360;   // device rotation since then
+      r = turned === 90 ? -90 : 90;                                                        // undo it
+    }
+  }
+  rot = r;
+  appW = r ? vh : vw; appH = r ? vw : vh;
+  const app = $('app');
+  app.style.width = appW + 'px'; app.style.height = appH + 'px';
+  app.style.transform = r === 90 ? `translate(${vw}px, 0) rotate(90deg)` : r === -90 ? `translate(0, ${vh}px) rotate(-90deg)` : '';
+}
+function toApp(e) {                      // screen coordinates -> coordinates inside the (possibly rotated) app
+  return rot === 90 ? [e.clientY, innerWidth - e.clientX] : rot === -90 ? [innerHeight - e.clientY, e.clientX] : [e.clientX, e.clientY];
+}
+
+// ---------- ink drawing ----------
+function sizeCanvas(cv) {
+  const dpr = devicePixelRatio || 1, W = Math.round(box.w * dpr), H = Math.round(box.h * dpr);
+  if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
+  cv.style.width = box.w + 'px'; cv.style.height = box.h + 'px';
+  cv.getContext('2d').setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+function drawStroke(ctx, s) {
+  const p = s.pts, W = box.w, H = box.h;
+  ctx.save();
+  ctx.lineCap = ctx.lineJoin = 'round';
+  ctx.strokeStyle = s.color;
+  ctx.lineWidth = s.w * W;
+  if (s.tool === 'hl') ctx.globalAlpha *= HL_ALPHA;
+  if (s.tool === 'laser') { ctx.shadowColor = s.color; ctx.shadowBlur = s.w * W * 3 * (devicePixelRatio || 1); }
+  ctx.beginPath();
+  ctx.moveTo(p[0] * W, p[1] * H);
+  for (let i = 2; i < p.length - 2; i += 2) {                      // smooth: curve through midpoints
+    ctx.quadraticCurveTo(p[i] * W, p[i + 1] * H, (p[i] + p[i + 2]) / 2 * W, (p[i + 1] + p[i + 3]) / 2 * H);
+  }
+  if (p.length > 2) ctx.lineTo(p[p.length - 2] * W, p[p.length - 1] * H);
+  ctx.lineTo(p[p.length - 2] * W + 0.05, p[p.length - 1] * H);   // tiny tail so a tap still draws a dot
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawInk() {
+  const ctx = inkCv.getContext('2d');
+  ctx.clearRect(0, 0, box.w, box.h);
+  const strokes = ink[cur] || [];
+  for (const s of strokes) if (s.tool === 'hl') drawStroke(ctx, s);   // highlighter underneath pen
+  for (const s of strokes) if (s.tool !== 'hl') drawStroke(ctx, s);
+}
+// live layer: the stroke being drawn plus laser trails (never saved)
+let laser = [], laserAlpha = 1, laserTimer = 0, laserFrame = 0;
+function paintLive(trail, alpha, current) {
+  const ctx = liveCv.getContext('2d');
+  ctx.clearRect(0, 0, box.w, box.h);
+  ctx.save(); ctx.globalAlpha = alpha;
+  for (const s of trail) drawStroke(ctx, s);
+  ctx.restore();
+  if (current) drawStroke(ctx, current);
+}
+function renderLive() {                  // paint here and mirror to the second screen
+  paintLive(laser, laserAlpha, stroke);
+  chan.postMessage({ type: 'live', trail: laser, alpha: laserAlpha, stroke });
+}
+function stopLaserFade() { clearTimeout(laserTimer); cancelAnimationFrame(laserFrame); laserAlpha = 1; }
+function startLaserFade() {              // after LASER_HOLD ms without laser use, fade out and forget
+  stopLaserFade();
+  laserTimer = setTimeout(() => {
+    const t0 = performance.now();
+    const step = now => {
+      laserAlpha = Math.max(0, 1 - (now - t0) / LASER_FADE);
+      if (laserAlpha === 0) { laser = []; laserAlpha = 1; renderLive(); return; }
+      renderLive();
+      laserFrame = requestAnimationFrame(step);
+    };
+    laserFrame = requestAnimationFrame(step);
+  }, LASER_HOLD);
+}
+
+function setInk(strokes) {               // every change goes through here (undoable)
+  (undoStack[cur] ||= []).push(ink[cur] || []);
+  redoStack[cur] = [];
+  ink[cur] = strokes;
+  inkChanged();
+}
+function undo() { step(undoStack, redoStack); }
+function redo() { step(redoStack, undoStack); }
+function step(from, to) {
+  const f = from[cur];
+  if (!f || !f.length) return;
+  (to[cur] ||= []).push(ink[cur] || []);
+  ink[cur] = f.pop();
+  inkChanged();
+}
+function inkChanged() { drawInk(); saveInk(); sync(); updateUndoButtons(); }
+function updateUndoButtons() {
+  if (audience) return;
+  $('undo').disabled = !(undoStack[cur] || []).length;
+  $('redo').disabled = !(redoStack[cur] || []).length;
+}
+function clearPage() { if ((ink[cur] || []).length) setInk([]); }
+function clearAllPages() {                 // each slide gets its own undo step, so Undo on a slide restores it
+  let count = 0;
+  for (const n of Object.keys(ink)) if (ink[n]?.length) {
+    (undoStack[n] ||= []).push(ink[n]); redoStack[n] = []; ink[n] = []; count++;
+  }
+  inkChanged();
+  toast(count ? `Cleared annotations from ${count} slide${count > 1 ? 's' : ''}. Undo on a slide brings its annotations back.`
+              : 'There were no annotations to clear.');
+}
+
+// ---------- pointer input: pen/mouse draw, finger swipes ----------
+let stroke = null, erasing = null, swipe = null, liveFrame = 0;
+const toSlide = e => { const [x, y] = toApp(e); return [(x - box.left) / box.w, (y - box.top) / box.h]; };
+
+stage.addEventListener('pointerdown', e => {
+  if (audience || !pdf) return;
+  if (e.pointerType === 'touch') {                  // fingers navigate, never draw
+    const [x, y] = toApp(e);
+    swipe = swipe ? { cancelled: true } : { id: e.pointerId, x, y };
+    return;
+  }
+  if (e.button !== 0 && e.button !== 5) return;     // left mouse / pen tip / pen eraser end
+  stage.setPointerCapture(e.pointerId);
+  if (tool === 'eraser' || e.button === 5) {
+    erasing = { before: ink[cur] || [], now: ink[cur] || [] };
+    eraseAt(e);
+  } else {
+    stroke = { tool, color: color[tool], w: WIDTH[tool], pts: toSlide(e).map(round) };
+    if (tool === 'laser') stopLaserFade();
+    renderLive();
+  }
+});
+
+stage.addEventListener('pointermove', e => {
+  if (e.pointerType === 'touch') return;
+  if (!stroke && !erasing) return;
+  if (swipe) swipe.cancelled = true;                // palm touching while writing: no swipe
+  const events = (e.getCoalescedEvents && e.getCoalescedEvents().length) ? e.getCoalescedEvents() : [e];
+  for (const ev of events) {
+    if (erasing) eraseAt(ev);
+    else stroke.pts.push(...toSlide(ev).map(round));
+  }
+  if (stroke && !liveFrame) liveFrame = requestAnimationFrame(() => {
+    liveFrame = 0;
+    if (stroke) renderLive();
+  });
+});
+
+function endPointer(e) {
+  if (e.pointerType === 'touch') {
+    if (swipe && !swipe.cancelled && swipe.id === e.pointerId) {
+      const [x, y] = toApp(e), dx = x - swipe.x, dy = y - swipe.y;
+      if (Math.abs(dx) > 50 && Math.abs(dx) > 1.5 * Math.abs(dy)) go(dx < 0 ? 1 : -1);
+    }
+    swipe = null;
+    return;
+  }
+  if (stroke) {
+    const s = stroke; stroke = null;
+    if (s.tool === 'laser') { laser.push(s); startLaserFade(); }
+    else setInk([...(ink[cur] || []), s]);
+    renderLive();
+  }
+  if (erasing) {
+    const { before, now } = erasing; erasing = null;
+    if (now !== before) { ink[cur] = before; setInk(now); }
+  }
+}
+stage.addEventListener('pointerup', endPointer);
+stage.addEventListener('pointercancel', endPointer);
+
+function eraseAt(e) {
+  const [ax, ay] = toApp(e), x = ax - box.left, y = ay - box.top;
+  const keep = erasing.now.filter(s => !hits(s, x, y));
+  if (keep.length !== erasing.now.length) {
+    erasing.now = ink[cur] = keep;               // shown live; committed (undoably) on pointer up
+    drawInk(); sync();
+  }
+}
+function hits(s, x, y) {                          // does the eraser circle touch this stroke?
+  const p = s.pts, W = box.w, H = box.h, r = ERASER_RADIUS + s.w * W / 2;
+  for (let i = 0; i < p.length; i += 2) {
+    const ax = p[Math.max(0, i - 2)] * W, ay = p[Math.max(1, i - 1)] * H, bx = p[i] * W, by = p[i + 1] * H;
+    const dx = bx - ax, dy = by - ay, len2 = dx * dx + dy * dy;
+    const t = len2 ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / len2)) : 0;
+    if (Math.hypot(ax + t * dx - x, ay + t * dy - y) <= r) return true;
+  }
+  return false;
+}
+const round = v => Math.round(v * 10000) / 10000;
+
+// stop iOS Safari from scrolling, zooming or showing the magnifier, anywhere on the page
+// (Safari's own fullscreen swipe-to-exit can't be blocked by a page: see toggleFullscreen)
+stage.addEventListener('touchstart', e => e.preventDefault(), { passive: false });
+document.addEventListener('touchmove', e => { if (!e.target.closest?.('#picker')) e.preventDefault(); }, { passive: false });
+document.addEventListener('gesturestart', e => e.preventDefault());
+stage.addEventListener('contextmenu', e => e.preventDefault());
+
+// ---------- keyboard ----------
+function onKey(e) {
+  const k = e.key;
+  if (pickerOpen) return pickerKey(k);
+  if ((e.metaKey || e.ctrlKey) && k.toLowerCase() === 'z') return (e.shiftKey ? redo() : undo()), true;
+  if ((e.metaKey || e.ctrlKey) && k.toLowerCase() === 'y') return redo(), true;
+  if (e.metaKey || e.ctrlKey || e.altKey) return false;
+  if (e.shiftKey && (k === 'ArrowRight' || k === 'ArrowLeft')) return go(k === 'ArrowRight' ? 10 : -10), true;
+  if (['ArrowRight', 'ArrowDown', 'PageDown', 'Enter'].includes(k) || (k === ' ' && !e.shiftKey)) go(1);
+  else if (['ArrowLeft', 'ArrowUp', 'PageUp', 'Backspace'].includes(k) || (k === ' ' && e.shiftKey)) go(-1);
+  else if (k === 'Home') show(1);
+  else if (k === 'End') show(pdf ? pdf.numPages : 1);
+  else if (k === 'p') setTool('pen');
+  else if (k === 'h') setTool('hl');
+  else if (k === 'e') setTool('eraser');
+  else if (k === 'l') setTool('laser');
+  else if (k >= '1' && k <= String(COLORS.length)) setColor(COLORS[k - 1]);
+  else if (k === String(COLORS.length + 1)) openColorPicker();
+  else if (k === 'f') toggleFullscreen();
+  else if (k === 'g') openPicker();
+  else if (k === 't') toggleBar();
+  else return false;
+  return true;
+}
+addEventListener('keydown', e => {
+  if (audience) {                                  // forward keys (e.g. a clicker) to the main window
+    if (e.key === 'f') toggleFullscreen();
+    else chan.postMessage({ type: 'key', key: e.key, shiftKey: e.shiftKey, metaKey: e.metaKey, ctrlKey: e.ctrlKey });
+    e.preventDefault();
+    return;
+  }
+  if (onKey(e)) e.preventDefault();
+});
+
+// ---------- toolbar ----------
+const swatches = $('swatches');
+for (const c of COLORS) {
+  const b = document.createElement('button');
+  b.className = 'sw'; b.style.background = c; b.dataset.color = c;
+  b.onclick = () => setColor(c);
+  swatches.append(b);
+}
+const pick = document.createElement('label');             // colour picker swatch: shows the picked colour in a rainbow ring
+pick.className = 'sw pick'; pick.title = 'Pick a colour (' + (COLORS.length + 1) + ')';
+pick.innerHTML = '<input type="color" value="#ffffff">';
+const picker = pick.firstChild;
+picker.oninput = picker.onchange = () => setColor(picker.value);
+swatches.append(pick);
+function openColorPicker() { try { picker.showPicker ? picker.showPicker() : picker.click(); } catch { picker.click(); } }
+function setTool(t) { tool = t; updateBar(); }
+function setColor(c) { if (tool === 'eraser') tool = 'pen'; color[tool] = c; updateBar(); }
+function updateBar() {
+  document.querySelectorAll('[data-tool]').forEach(b => b.classList.toggle('on', b.dataset.tool === tool));
+  document.querySelectorAll('.sw[data-color]').forEach(b => b.classList.toggle('on', tool !== 'eraser' && b.dataset.color === color[tool]));
+  const custom = tool !== 'eraser' && !COLORS.includes(color[tool]);
+  pick.classList.toggle('on', custom);
+  if (custom) { pick.style.setProperty('--c', color[tool]); picker.value = color[tool]; }
+  stage.classList.toggle('eraser', tool === 'eraser');
+}
+document.querySelectorAll('[data-tool]').forEach(b => b.onclick = () => setTool(b.dataset.tool));
+$('prev').onclick = () => go(-1);
+$('next').onclick = () => go(1);
+$('back10').onclick = () => go(-10);
+$('fwd10').onclick = () => go(10);
+$('undo').onclick = undo;
+$('redo').onclick = redo;
+// Clear: tap clears this slide; long-press (or right-click) opens a menu that also offers "Clear all slides"
+let clearPressTimer = 0, clearLongPressed = false;
+const clearBtn = $('clear'), clearMenu = $('clearMenu');
+function openClearMenu() {
+  clearMenu.style.left = clearBtn.offsetLeft + 'px';
+  clearMenu.classList.remove('hidden');
+}
+const closeClearMenu = () => clearMenu.classList.add('hidden');
+clearBtn.addEventListener('pointerdown', () => {
+  clearLongPressed = false;
+  clearPressTimer = setTimeout(() => { clearLongPressed = true; openClearMenu(); }, 550);
+});
+for (const t of ['pointerup', 'pointercancel', 'pointerleave']) clearBtn.addEventListener(t, () => clearTimeout(clearPressTimer));
+clearBtn.onclick = () => { if (clearLongPressed) clearLongPressed = false; else clearPage(); };
+clearBtn.oncontextmenu = e => { e.preventDefault(); openClearMenu(); };
+$('clearOne').onclick = () => { closeClearMenu(); clearPage(); };
+$('clearAll').onclick = () => { closeClearMenu(); clearAllPages(); };
+document.addEventListener('pointerdown', e => {   // a tap anywhere else just closes the menu (and doesn't draw)
+  if (clearMenu.classList.contains('hidden') || clearMenu.contains(e.target) || e.target === clearBtn) return;
+  closeClearMenu();
+  if (stage.contains(e.target)) e.stopPropagation();
+}, true);
+addEventListener('keydown', e => { if (e.key === 'Escape') closeClearMenu(); });
+$('export').onclick = exportPdf;
+$('fs').onclick = toggleFullscreen;
+$('hidebar').onclick = $('showbar').onclick = toggleBar;
+$('screen2').onclick = () => {
+  if (isIPad && isHomeScreenApp)   // a Home Screen app is walled off from Safari, so a Safari window couldn't follow it
+    return toast('Screen 2 needs this page open in Safari: a Home Screen app runs separately from Safari, ' +
+                 'so a second window could not follow its slides and annotations.', 9000);
+  const w = window.open(location.pathname + '#audience', 'pdf-slides-audience', 'popup,width=960,height=540');
+  if (!w) toast('The browser blocked the second window. Allow pop-ups for this page and try again.');
+  else if (isIPad) toast(IPAD_SCREEN2_STEPS, 15000);
+};
+// iPad: needs the external display set to extend rather than mirror (iPadOS 26, M1 or later)
+const IPAD_SCREEN2_STEPS = 'Screen 2 opened in a new Safari tab. Drag that tab out into its own window, then move the window ' +
+  'to the external display (drag it there, or hold the top of the window → Move to Display). ' +
+  'The external display must be set to extend, not mirror.';
+function toggleBar() { $('bar').classList.toggle('hidden'); $('showbar').classList.toggle('hidden'); }
+const isIPad = /iPad|iPhone/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+const isHomeScreenApp = navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
+let fullscreenTipShown = false;
+function toggleFullscreen() {
+  const d = document, el = d.documentElement;
+  if (d.fullscreenElement || d.webkitFullscreenElement) return (d.exitFullscreen || d.webkitExitFullscreen).call(d);
+  // Safari on iPad leaves fullscreen on any downward drag, Pencil included, and pages can't stop it.
+  // Opened from the Home Screen there is no such gesture (and the Pencil can't trigger system edge gestures).
+  if (isIPad && !audience && !fullscreenTipShown) {
+    fullscreenTipShown = true;
+    toast('Heads-up: in Safari fullscreen, any downward drag (even with the Pencil) exits fullscreen. ' +
+          'For drawing without that, use Share → Add to Home Screen and open Slides from there.', 9000);
+  }
+  (el.requestFullscreen || el.webkitRequestFullscreen)?.call(el)?.catch?.(() => {});
+}
+let toastTimer;
+function toast(msg, ms = 6000) {
+  const t = $('toast');
+  t.textContent = msg; t.classList.remove('hidden');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.add('hidden'), ms);
+}
+$('toast').onclick = () => $('toast').classList.add('hidden');
+updateBar(); updateUndoButtons();
+if (isIPad && isHomeScreenApp) $('fs').remove();   // already fullscreen
+if (!SCREEN2) $('screen2').remove();
+
+// Apple Pencil on the toolbar: activate the control on pen-up ourselves instead of relying on the
+// browser turning the tap into a click. A press counts if it starts and ends on the same control.
+let penPress = null, suppressClickUntil = 0;
+const control = el => el?.closest?.('#bar button, #bar label, #showbar, #toast, #picker button');
+document.addEventListener('pointerdown', e => { if (e.pointerType === 'pen') penPress = control(e.target); }, true);
+document.addEventListener('pointerup', e => {
+  if (e.pointerType !== 'pen' || !penPress) return;
+  const hit = control(document.elementFromPoint(e.clientX, e.clientY));
+  if (hit === penPress) { hit.click(); suppressClickUntil = performance.now() + 600; }
+  penPress = null;
+}, true);
+document.addEventListener('click', e => {   // swallow the browser's own click for that tap, if it sends one
+  if (e.isTrusted && performance.now() < suppressClickUntil) { e.preventDefault(); e.stopPropagation(); suppressClickUntil = 0; }
+}, true);
+
+// ---------- saving annotations (per PDF, in this browser) ----------
+let saveTimer;
+function saveInk() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => { try { localStorage.setItem(docKey, JSON.stringify(ink)); } catch (e) { console.warn('Could not save annotations', e); } }, 300);
+}
+function loadInk() { try { return JSON.parse(localStorage.getItem(docKey)) || {}; } catch { return {}; } }
+
+// ---------- slide picker: a scrollable grid of thumbnails ----------
+const THUMB_W = 360;                       // thumbnail width in CSS px
+let thumbs = new Map();                    // page -> Promise<{url, aspect}> (JPEG of the page, no ink)
+let pickerOpen = false, sel = 1, observer = null;
+function resetThumbs() {
+  for (const t of thumbs.values()) t.then(t => URL.revokeObjectURL(t.url), () => {});
+  thumbs = new Map();
+  $('grid').replaceChildren();
+}
+function thumb(n) {
+  if (!thumbs.has(n)) thumbs.set(n, (async () => {
+    const page = await pdf.getPage(n);
+    const vp1 = page.getViewport({ scale: 1 });
+    const viewport = page.getViewport({ scale: THUMB_W * Math.min(devicePixelRatio || 1, 2) / vp1.width });
+    const c = document.createElement('canvas');
+    c.width = Math.round(viewport.width); c.height = Math.round(viewport.height);
+    await page.render({ canvas: c, viewport }).promise;
+    const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.85));
+    c.width = c.height = 0;
+    return { url: URL.createObjectURL(blob), aspect: vp1.width / vp1.height };
+  })());
+  return thumbs.get(n);
+}
+function inkSvg(n, aspect) {               // this page's annotations as a small SVG over the thumbnail
+  const strokes = ink[n] || [];
+  if (!strokes.length) return '';
+  const W = 1000, H = W / aspect;
+  const path = s => {
+    let d = '';
+    for (let i = 0; i < s.pts.length; i += 2) d += (i ? 'L' : 'M') + (s.pts[i] * W).toFixed(1) + ' ' + (s.pts[i + 1] * H).toFixed(1);
+    return `<path d="${d}l0.1 0" stroke="${s.color}" stroke-width="${(s.w * W).toFixed(1)}"${s.tool === 'hl' ? ` stroke-opacity="${HL_ALPHA}"` : ''}/>`;
+  };
+  const ordered = [...strokes.filter(s => s.tool === 'hl'), ...strokes.filter(s => s.tool !== 'hl')];
+  return `<svg viewBox="0 0 ${W} ${H.toFixed(1)}" fill="none" stroke-linecap="round" stroke-linejoin="round">${ordered.map(path).join('')}</svg>`;
+}
+function fillCell(cell) {                  // load the thumbnail (once) and draw current annotations on it
+  const n = +cell.dataset.n;
+  thumb(n).then(({ url, aspect }) => {
+    const frame = cell.firstChild;
+    frame.style.aspectRatio = aspect;
+    if (!frame.querySelector('img')) { const img = new Image(); img.src = url; img.alt = ''; frame.prepend(img); }
+    frame.querySelector('svg')?.remove();
+    frame.insertAdjacentHTML('beforeend', inkSvg(n, aspect));
+  }, () => {});
+}
+function openPicker() {
+  if (!pdf || audience) return;
+  const grid = $('grid');
+  if (!grid.children.length) {             // build the grid once per document; thumbnails load as they scroll into view
+    observer?.disconnect();
+    observer = new IntersectionObserver(entries => {
+      for (const e of entries) if (e.isIntersecting) { fillCell(e.target); observer.unobserve(e.target); }
+    }, { root: $('picker'), rootMargin: '400px 0px' });
+    for (let n = 1; n <= pdf.numPages; n++) {
+      const cell = document.createElement('button');
+      cell.dataset.n = n;
+      cell.innerHTML = `<div class="frame" style="aspect-ratio:${deckAspect}"></div>${n}`;
+      cell.onclick = () => { closePicker(); show(n); };
+      grid.append(cell);
+      observer.observe(cell);
+    }
+  } else {                                 // annotations may have changed since last time
+    for (const cell of grid.children) if (cell.firstChild.querySelector('img')) fillCell(cell);
+  }
+  pickerOpen = true; sel = cur;
+  $('picker').classList.remove('hidden');
+  markCells();
+  grid.children[cur - 1].scrollIntoView({ block: 'center' });
+}
+function closePicker() { pickerOpen = false; $('picker').classList.add('hidden'); }
+function markCells() {
+  for (const cell of $('grid').children) {
+    cell.classList.toggle('current', +cell.dataset.n === cur);
+    cell.classList.toggle('sel', +cell.dataset.n === sel && sel !== cur);
+  }
+}
+function pickerKey(k) {                    // keyboard inside the picker: arrows move, Enter jumps, Esc closes
+  const cells = $('grid').children;
+  const cols = [...cells].filter(c => c.offsetTop === cells[0].offsetTop).length || 1;
+  const move = { ArrowRight: 1, ArrowLeft: -1, ArrowDown: cols, ArrowUp: -cols }[k];
+  if (move) {
+    sel = Math.max(1, Math.min(pdf.numPages, sel + move));
+    markCells(); cells[sel - 1].scrollIntoView({ block: 'nearest' });
+  } else if (k === 'Enter' || k === ' ') { closePicker(); show(sel); }
+  else if (k === 'Escape' || k === 'g') closePicker();
+  return true;
+}
+$('page').onclick = openPicker;
+$('closePicker').onclick = closePicker;
+
+// ---------- export: annotations drawn as vector paths onto the original PDF ----------
+async function exportPdf() {
+  if (!pdf) return;
+  const btn = $('export');
+  btn.textContent = 'Exporting…'; btn.disabled = true;
+  try {
+    const { PDFDocument, rgb, LineCapStyle, LineJoinStyle, setLineJoin, pushGraphicsState, popGraphicsState } =
+      await import('./pdf-lib/pdf-lib.esm.min.js');   // loaded only when needed
+    const doc = await PDFDocument.load(await pdf.getData());
+    const pages = doc.getPages();
+    for (const [n, strokes] of Object.entries(ink)) {
+      const page = pages[n - 1];
+      if (!page || !strokes.length) continue;
+      const map = pageMapper(page);
+      page.pushOperators(pushGraphicsState(), setLineJoin(LineJoinStyle.Round));
+      for (const s of [...strokes.filter(s => s.tool === 'hl'), ...strokes.filter(s => s.tool !== 'hl')]) {
+        const hex = s.color.slice(1).match(/../g).map(h => parseInt(h, 16) / 255);
+        page.drawSvgPath(svgPath(s, map.pt), {
+          x: 0, y: 0, borderColor: rgb(...hex), borderWidth: s.w * map.w,
+          borderOpacity: s.tool === 'hl' ? HL_ALPHA : 1, borderLineCap: LineCapStyle.Round,
+        });
+      }
+      page.pushOperators(popGraphicsState());
+    }
+    const file = new File([await doc.save()], docName.replace(/\.pdf$/i, '') + ' (annotated).pdf', { type: 'application/pdf' });
+    const hosted = await (window.claude?.use?.('downloads') ?? null);   // only when hosted as a claude.ai artifact
+    if (hosted) {
+      await hosted.save({ filename: file.name, data: file }).catch(e => { if (e.code !== 'declined') throw new Error(e.message); });
+    } else {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(file); a.download = file.name;
+      document.body.append(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+    }
+  } catch (err) {
+    console.error(err); toast('Export failed: ' + err.message);
+  } finally {
+    btn.textContent = 'Export'; btn.disabled = false;
+  }
+}
+function pageMapper(page) {   // slide coords (0..1, y down, as displayed) -> PDF points, honouring crop box and rotation
+  const { x, y, width: w, height: h } = page.getCropBox();
+  const rot = ((page.getRotation().angle % 360) + 360) % 360;
+  const pt = {
+    0:   (u, v) => [x + u * w, y + (1 - v) * h],
+    90:  (u, v) => [x + v * w, y + u * h],
+    180: (u, v) => [x + (1 - u) * w, y + v * h],
+    270: (u, v) => [x + (1 - v) * w, y + (1 - u) * h],
+  }[rot];
+  return { pt, w: rot % 180 ? h : w };     // w = displayed width in points
+}
+function svgPath(s, pt) {     // same smoothing as drawStroke; pdf-lib flips SVG's y axis, so pass -y
+  const p = s.pts, f = (u, v) => { const [X, Y] = pt(u, v); return X.toFixed(2) + ' ' + (-Y).toFixed(2); };
+  let d = 'M ' + f(p[0], p[1]);
+  for (let i = 2; i < p.length - 2; i += 2) d += ' Q ' + f(p[i], p[i + 1]) + ' ' + f((p[i] + p[i + 2]) / 2, (p[i + 1] + p[i + 3]) / 2);
+  if (p.length > 2) d += ' L ' + f(p[p.length - 2], p[p.length - 1]);
+  return d + ' L ' + f(p[p.length - 2] + 0.0001, p[p.length - 1]);   // tiny tail so a tap still draws a dot
+}
+
+// ---------- second screen: a clean window kept in sync over BroadcastChannel ----------
+function sync() { chan.postMessage({ type: 'state', page: cur, strokes: ink[cur] || [] }); }
+async function sendDoc() { if (pdf) { chan.postMessage({ type: 'doc', data: await pdf.getData() }); sync(); } }
+
+chan.onmessage = async ({ data: m }) => {
+  if (!audience) {
+    if (m.type === 'hello') sendDoc();
+    if (m.type === 'key') onKey(m);
+    return;
+  }
+  if (m.type === 'doc') { ink = {}; cur = 1; await openPdf(m.data, null); }
+  else if (m.type === 'state') {
+    ink[m.page] = m.strokes;
+    if (!pdf) cur = m.page;                        // still loading: show this page once ready
+    else if (m.page !== cur) show(m.page);
+    else drawInk();
+  }
+  else if (m.type === 'live' && pdf) paintLive(m.trail, m.alpha, m.stroke);
+};
+
+if (audience) {
+  document.title = 'PDF Slides – audience';
+  $('bar').classList.add('hidden'); $('showbar').remove();
+  $('empty').innerHTML = 'Waiting for the main window…<br><small>Drag this window to the other display, then double-click (or press F) for fullscreen.</small>';
+  stage.style.cursor = 'default';
+  stage.addEventListener('dblclick', toggleFullscreen);
+  if (isIPad) toast(IPAD_SCREEN2_STEPS + ' Tap this message to hide it.', 30000);
+  chan.postMessage({ type: 'hello' });
+}
+</script>
+</body>
+</html>
