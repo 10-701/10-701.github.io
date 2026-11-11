@@ -83,12 +83,17 @@ h3 { font-size: 17px; font-weight: 600; margin: 0; text-wrap: balance; }
 .notes .body p:last-child { margin: 0; }
 .notes .diff { font-size: 12.5px; color: var(--ink-2); background: var(--accent-wash); border-radius: 6px; padding: 7px 9px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .notes .diff[hidden] { display: none; }
+.notes .ctx { display: grid; gap: 8px; margin: 10px 0; padding: 8px 10px; border-radius: 6px; background: var(--accent-wash); }
+.notes .ctx p { margin: 0; }
+.notes .tryit ul { margin: 4px 0 0; padding-left: 18px; display: grid; gap: 4px; }
 .notes .tryit { border-left: 3px solid var(--accent); padding: 2px 0 2px 10px; color: var(--ink-2); }
 i.m, .m { font-family: var(--font-mono); font-style: normal; font-size: 0.95em; }
 
 svg { display: block; width: 100%; height: auto; touch-action: none; }
 svg text { font-family: var(--font-body); }
-#plane { cursor: crosshair; border-radius: 6px; }
+#plane { cursor: crosshair; border-radius: 6px; max-height: calc(100vh - 90px); min-height: 300px; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+#plane image { pointer-events: none; }
+.plottitle { user-select: none; -webkit-user-select: none; }
 #plane:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .plottitle { font-size: 15px; font-weight: 500; text-align: center; margin-bottom: -4px; }
 .plottitle span { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
@@ -120,7 +125,13 @@ svg text { font-family: var(--font-body); }
 .checks { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12.5px; color: var(--ink-2); }
 .checks label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
 .checks input { accent-color: var(--accent); margin: 0; }
-.smallrow { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start; }
+.estrow { display: grid; grid-template-columns: minmax(150px, 210px) minmax(0, 1fr); gap: 16px; align-items: start; }
+.estctl { display: grid; gap: 10px; }
+.controls.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.batchrow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: end; }
+.mdp .controls { display: grid; gap: 10px; padding-top: 10px; border-top: 1px solid var(--hair); }
+.scorerow { display: grid; grid-template-columns: minmax(0, 220px) minmax(0, 1fr); gap: 14px; align-items: center; }
+@media (max-width: 520px) { .estrow, .controls.pair, .scorerow { grid-template-columns: minmax(0, 1fr); } }
 .cap { font-size: 12px; color: var(--ink-2); margin: 0; }
 .cap .m { color: var(--ink); }
 
@@ -164,115 +175,124 @@ tfoot td { border-bottom: 0; font-weight: 500; }
 
   <div class="grid">
     <div class="stack side">
-    <section class="card notes">
-      <h2>Scene notes</h2>
-      <h3 id="noteTitle" aria-live="polite"></h3>
-      <div class="body" id="noteBody"></div>
-      <div class="diff" id="noteDiff" hidden><span id="noteDiffText"></span> <button class="btn sm" id="restoreScene">Restore scene</button></div>
-    </section>
-    <section class="card mdp">
-      <h2>The MDP</h2>
-      <svg id="mdp" viewBox="0 0 280 108" role="img" aria-label="States on a line, an example episode under an optimal policy drawn as arcs, and the reward for each state."></svg>
-      <p class="cap" id="mdpCap"></p>
-    </section>
-
-    <section class="card controls" id="controls">
-      <h2>Settings</h2>
-      <div class="group">
-        <div class="row"><label for="H">Horizon H <output id="H_o"></output></label><input type="range" id="H" min="1" max="10" step="1"></div>
-        <div class="row"><label for="N">Episodes per batch N <output id="N_o"></output></label><input type="range" id="N" min="1" max="400" step="1"></div>
-        <div class="row"><label for="S">Start positions ±S, uniform <output id="S_o"></output></label><input type="range" id="S" min="0" max="4" step="1"></div>
-        <div class="row"><label for="g">Goal position <output id="g_o"></output></label><input type="range" id="g" min="-3" max="3" step="1"></div>
-      </div>
-      <div class="group">
-        <div class="row"><span class="lbl">Reward −|x − goal| + c, paid</span>
-          <div class="seg" role="radiogroup" aria-label="Reward timing">
-            <label><input type="radio" name="rewardMode" value="dense">after every step</label>
-            <label><input type="radio" name="rewardMode" value="terminal">at the end only</label>
-          </div></div>
-        <div class="row"><label for="c">Reward offset c <output id="c_o"></output></label><input type="range" id="c" min="-10" max="10" step="1"></div>
-        <div class="row"><span class="lbl">Discounting</span>
-          <div class="seg" role="radiogroup" aria-label="Discounting">
-            <label><input type="radio" name="mode" value="undiscounted">none</label>
-            <label><input type="radio" name="mode" value="delay">by delay</label>
-            <label><input type="radio" name="mode" value="absolute">from start</label>
-          </div></div>
-        <div class="row"><label for="gamma">Discount γ <output id="gamma_o"></output></label><input type="range" id="gamma" min="0" max="0.99" step="0.01"></div>
-      </div>
-      <div class="group">
-        <div class="row"><label for="scale">Arrow scale <output id="scale_o"></output></label><input type="range" id="scale" min="-4" max="4" step="0.25"></div>
-        <p class="hint">The middle of the slider is fitted to the cloud of episode estimates when a scene loads, and stays fixed while you change settings.</p>
-            </div>
-      <div class="group">
-        <div class="row"><label for="alpha">Learning rate α <output id="alpha_o"></output></label><input type="range" id="alpha" min="-3" max="0" step="0.05"></div>
-        <div class="btnrow"><button class="btn" id="resample">Resample batch</button><button class="btn" id="resetTheta">Reset θ</button></div>
-        <div class="btnrow"><button class="btn" id="stepBtn">Take one step</button><button class="btn primary" id="trainBtn">Train</button><button class="btn" id="clearPath">Clear path</button></div>
-        <p class="hint">Each step draws a fresh batch and moves θ by α·ĝ.</p>
-      </div>
-    </section>
+      <section class="card notes">
+        <h2>Scene notes</h2>
+        <h3 id="noteTitle" aria-live="polite"></h3>
+        <div class="body" id="noteBody"></div>
+        <div class="diff" id="noteDiff" hidden><span id="noteDiffText"></span> <button class="btn sm" id="restoreScene">Restore scene</button></div>
+      </section>
+      <section class="card mdp">
+        <h2>The MDP</h2>
+        <svg id="mdp" viewBox="0 0 280 108" role="img" aria-label="States on a line, an example episode under an optimal policy drawn as arcs, and the reward for each state."></svg>
+        <p class="cap" id="mdpCap"></p>
+        <div class="controls">
+          <div class="group">
+            <div class="row"><label for="H">Horizon H <output id="H_o"></output></label><input type="range" id="H" min="1" max="10" step="1"></div>
+            <div class="row"><label for="S">Start positions ±S, uniform <output id="S_o"></output></label><input type="range" id="S" min="0" max="4" step="1"></div>
+            <div class="row"><label for="g">Goal position <output id="g_o"></output></label><input type="range" id="g" min="-3" max="3" step="1"></div>
+          </div>
+          <div class="group">
+            <div class="row"><span class="lbl">Reward −|x − goal| + c, paid</span>
+              <div class="seg" role="radiogroup" aria-label="Reward timing">
+                <label><input type="radio" name="rewardMode" value="dense">after every step</label>
+                <label><input type="radio" name="rewardMode" value="terminal">at the end only</label>
+              </div></div>
+            <div class="row"><label for="c">Reward offset c <output id="c_o"></output></label><input type="range" id="c" min="-10" max="10" step="1"></div>
+          </div>
+        </div>
+      </section>
     </div>
     <div class="main">
-    <section class="card plane">
-      <h2>Parameter plane (θ₁, θ₂)</h2>
-      <div class="plottitle" id="plotTitle"></div>
-      <svg id="plane" viewBox="0 0 540 528" tabindex="0" role="img" aria-label="Parameter plane with contours of the objective and gradient arrows. Drag to move theta; arrow keys nudge it."></svg>
-      <div class="scorepick" role="radiogroup" aria-label="Display">
-        <span class="lbl">Display</span>
-        <div class="pickrow">
-          <div class="seg"><label><input type="radio" name="scoreX" value="off" checked>gradient estimates</label></div>
-          <span class="or">or score vectors at state x =</span>
-        </div>
-        <div class="seg compact" id="scorePick"></div>
-      </div>
-      <div class="legend">
-        <span class="lg-est"><svg viewBox="0 0 26 12"><line x1="1" y1="6" x2="18" y2="6" stroke="var(--ink)" stroke-width="2.5"/><path d="M25 6 L17 2 L17 10Z" fill="var(--ink)"/></svg>exact gradient ∇J</span>
-        <span class="lg-est"><svg viewBox="0 0 26 12"><line x1="1" y1="6" x2="18" y2="6" stroke="var(--ink)" stroke-width="1.6" stroke-dasharray="3 2.5"/><path d="M24 6 L17 2.5 L17 9.5Z" fill="none" stroke="var(--ink)" stroke-width="1.3"/></svg>estimator's mean E[ĝ]</span>
-        <span class="lg-est"><svg viewBox="0 0 26 12"><line x1="1" y1="6" x2="18" y2="6" stroke="var(--mean)" stroke-width="2.5"/><path d="M25 6 L17 2 L17 10Z" fill="var(--mean)"/></svg>batch average ĝ</span>
-        <span class="lg-est"><svg viewBox="0 0 26 12"><circle cx="13" cy="6" r="3.2" fill="var(--mean)" fill-opacity="0.5"/></svg>one episode's estimate</span>
-        <span class="lg-est"><svg viewBox="0 0 26 12"><line x1="1" y1="6" x2="12" y2="6" stroke="var(--accent)" stroke-width="2"/><line x1="12" y1="6" x2="25" y2="3" stroke="var(--accent)" stroke-width="2"/><circle cx="12" cy="6" r="2" fill="var(--accent)"/></svg>selected episode, link per step</span>
-        <span><svg viewBox="0 0 26 12"><line x1="1" y1="6" x2="25" y2="6" stroke="var(--muted)" stroke-width="1.3" stroke-dasharray="5 3"/></svg>policies that switch at goal</span>
-        <span id="legScore" hidden><svg viewBox="0 0 26 12"><line x1="13" y1="6" x2="2" y2="6" stroke="var(--left)" stroke-width="2"/><line x1="13" y1="6" x2="24" y2="6" stroke="var(--right)" stroke-width="2"/></svg>score vectors for → (blue) and ← (red)</span>
-      </div>
-      <p class="cap">Contour bands: darker is higher <span class="m" id="objName">J(θ)</span>; each band covers an equal share of the visible plane. Arrows are drawn from θ at the scale in the title. Drag anywhere to move θ; click a dot to select its episode.</p>
-      <div class="stats" id="stats"></div>
-    </section>
+      <div class="stack">
+        <section class="card plane">
+          <h2>Parameter plane (θ₁, θ₂)</h2>
+          <div class="plottitle" id="plotTitle"></div>
+          <svg id="plane" viewBox="0 0 540 528" tabindex="0" role="img" aria-label="Parameter plane with contours of the objective and gradient arrows. Drag to move theta; arrow keys nudge it."></svg>
+          <div class="btnrow"><button class="btn" id="stepBtn">Take one step</button><button class="btn primary" id="trainBtn">Train</button><button class="btn" id="clearPath">Clear path</button><button class="btn" id="resetTheta">Reset θ</button></div>
+          <div class="controls pair">
+            <div class="row"><label for="scale">Arrow scale <output id="scale_o"></output></label><input type="range" id="scale" min="-4" max="4" step="0.25"></div>
+            <div class="row"><label for="alpha">Learning rate α <output id="alpha_o"></output></label><input type="range" id="alpha" min="-3" max="0" step="0.05"></div>
+          </div>
+          <p class="hint">The middle of the arrow-scale slider is fitted to the cloud of episode estimates when a scene loads. Each training step draws a fresh batch at θ and moves θ by α·ĝ.</p>
+          <div class="scorepick" role="radiogroup" aria-label="Display">
+            <span class="lbl">Display</span>
+            <div class="pickrow">
+              <div class="seg"><label><input type="radio" name="scoreX" value="off" checked>gradient estimates</label></div>
+              <span class="or">or score vectors at state x =</span>
+            </div>
+            <div class="seg compact" id="scorePick"></div>
+          </div>
+          <div class="legend">
+            <span class="lg-est"><svg viewBox="0 0 26 12"><line x1="1" y1="6" x2="18" y2="6" stroke="var(--ink)" stroke-width="2.5"/><path d="M25 6 L17 2 L17 10Z" fill="var(--ink)"/></svg>exact gradient ∇J</span>
+            <span class="lg-est"><svg viewBox="0 0 26 12"><line x1="1" y1="6" x2="18" y2="6" stroke="var(--ink)" stroke-width="1.6" stroke-dasharray="3 2.5"/><path d="M24 6 L17 2.5 L17 9.5Z" fill="none" stroke="var(--ink)" stroke-width="1.3"/></svg>estimator's mean E[ĝ]</span>
+            <span class="lg-est"><svg viewBox="0 0 26 12"><line x1="1" y1="6" x2="18" y2="6" stroke="var(--mean)" stroke-width="2.5"/><path d="M25 6 L17 2 L17 10Z" fill="var(--mean)"/></svg>batch average ĝ</span>
+            <span class="lg-est"><svg viewBox="0 0 26 12"><circle cx="13" cy="6" r="3.2" fill="var(--mean)" fill-opacity="0.5"/></svg>one episode's estimate</span>
+            <span class="lg-est"><svg viewBox="0 0 26 12"><line x1="1" y1="6" x2="12" y2="6" stroke="var(--accent)" stroke-width="2"/><line x1="12" y1="6" x2="25" y2="3" stroke="var(--accent)" stroke-width="2"/><circle cx="12" cy="6" r="2" fill="var(--accent)"/></svg>selected episode, link per step</span>
+            <span><svg viewBox="0 0 26 12"><line x1="1" y1="6" x2="25" y2="6" stroke="var(--muted)" stroke-width="1.3" stroke-dasharray="5 3"/></svg>policies that switch at goal</span>
+            <span id="legScore" hidden><svg viewBox="0 0 26 12"><line x1="13" y1="6" x2="2" y2="6" stroke="var(--left)" stroke-width="2"/><line x1="13" y1="6" x2="24" y2="6" stroke="var(--right)" stroke-width="2"/></svg>score vectors for → (blue) and ← (red)</span>
+          </div>
+          <p class="cap">Contour bands: darker is higher <span class="m" id="objName">J(θ)</span>; each band covers an equal share of the visible plane. Arrows are drawn from θ at the scale in the title. Drag anywhere to move θ: the episodes stay fixed and their estimates are recomputed at the new θ. Away from the hollow ring where they were sampled, the estimates are biased unless the cumulative importance ratio is on (Estimator panel); the dashed arrow always shows their exact mean. Click a dot to select its episode.</p>
+        </section>
 
-    <div class="stack">
-    <section class="card world">
-      <h2>Episodes</h2>
-      <svg id="traj" viewBox="0 0 400 296" role="img" aria-label="Positions over time for every episode in the batch, with the selected episode highlighted."></svg>
-      <div class="epbar">
-        <button class="btn" id="epPrev" aria-label="Previous episode">‹</button>
-        <span>Episode <span class="num" id="epNum"></span></span>
-        <button class="btn" id="epNext" aria-label="Next episode">›</button>
-        <span>return <span class="num" id="epRet"></span></span>
-        <button class="btn sm" id="epBest">Best</button>
-        <button class="btn sm" id="epWorst">Worst</button>
+        <section class="card estimator">
+          <h2>Estimator</h2>
+          <div class="estrow">
+            <div class="credit">
+              <svg id="credit" viewBox="0 0 200 200" role="img" aria-label="Credit matrix: weight of each reward on each action."></svg>
+            </div>
+            <div class="controls estctl">
+              <div class="row"><span class="lbl">Discounting</span>
+                <div class="seg" role="radiogroup" aria-label="Discounting">
+                  <label><input type="radio" name="mode" value="undiscounted">none</label>
+                  <label><input type="radio" name="mode" value="delay">by delay</label>
+                  <label><input type="radio" name="mode" value="absolute">from start</label>
+                </div></div>
+              <div class="row"><label for="gamma">Discount γ <output id="gamma_o"></output></label><input type="range" id="gamma" min="0" max="0.99" step="0.01"></div>
+              <div class="row"><span class="lbl">Episodes sampled at another θ: importance weights</span>
+                <div class="seg" role="radiogroup" aria-label="Importance weights">
+                  <label><input type="radio" name="is" value="off">use as is</label>
+                  <label><input type="radio" name="is" value="step">current-step ratio</label>
+                  <label><input type="radio" name="is" value="full">cumulative ratio</label>
+                </div></div>
+              <p class="cap" id="creditCap"></p>
+            </div>
+          </div>
+          <div class="stats" id="stats"></div>
+        </section>
       </div>
-      <p class="cap">Left column: the policy's probability of stepping right at each position. Grey paths: the batch, each shifted slightly so overlaps stay visible. A path that turns at a position curves just short of it; a path that keeps going passes straight through.</p>
-    </section>
 
-    <section class="card small">
-      <div class="smallrow">
-        <div style="display:grid;gap:6px">
+      <div class="stack">
+        <section class="card world">
+          <h2>Episodes</h2>
+          <svg id="traj" viewBox="0 0 400 296" role="img" aria-label="Positions over time for every episode in the batch, with the selected episode highlighted."></svg>
+          <div class="epbar">
+            <button class="btn" id="epPrev" aria-label="Previous episode">‹</button>
+            <span>Episode <span class="num" id="epNum"></span></span>
+            <button class="btn" id="epNext" aria-label="Next episode">›</button>
+            <span>return <span class="num" id="epRet"></span></span>
+            <button class="btn sm" id="epBest">Best</button>
+            <button class="btn sm" id="epWorst">Worst</button>
+          </div>
+          <div class="controls batchrow">
+            <div class="row"><label for="N">Episodes per batch N <output id="N_o"></output></label><input type="range" id="N" min="1" max="400" step="1"></div>
+            <button class="btn sm" id="resample">Resample batch</button>
+          </div>
+          <p class="cap">Left column: the policy's probability of stepping right at each position. Grey paths: the batch, each shifted slightly so overlaps stay visible. A path that turns at a position curves just short of it; a path that keeps going passes straight through.</p>
+        </section>
+
+        <section class="card small">
           <h2>Score vectors</h2>
-          <svg id="score" viewBox="0 0 200 200" role="img" aria-label="Score vectors of the selected episode."></svg>
-          <p class="cap">Selected episode. Solid: action taken. Dashed: the other action. Numbers are time steps. Grid spacing <span class="m" id="scoreGrid">0.5</span>.</p>
-        </div>
-        <div style="display:grid;gap:6px">
-          <h2>Credit</h2>
-          <svg id="credit" viewBox="0 0 200 200" role="img" aria-label="Credit matrix: weight of each reward on each action."></svg>
-          <p class="cap" id="creditCap"></p>
-        </div>
+          <div class="scorerow">
+            <svg id="score" viewBox="0 0 200 200" role="img" aria-label="Score vectors of the selected episode."></svg>
+            <p class="cap">Selected episode. Solid: action taken. Dashed: the other action. Numbers are time steps. Grid spacing <span class="m" id="scoreGrid">0.5</span>.</p>
+          </div>
+        </section>
       </div>
-    </section>
 
-
-    </div>
-    <section class="card tablecard">
-      <h2>Selected episode, step by step</h2>
-      <div class="tablewrap"><table id="table"></table></div>
-    </section>
+      <section class="card tablecard">
+        <h2>Selected episode, step by step</h2>
+        <div class="tablewrap"><table id="table"></table></div>
+      </section>
     </div>
   </div>
 </div>
@@ -340,9 +360,10 @@ const RL = (() => {
   }
 
   // sum_t outer^t sum_x d_t(x) sum_a pi score Q^inner_t(x,a)
-  function pgSum(th, cfg, outer, inner) {
+  // thB: behaviour policy for states and future returns; stepIS: actions at each visited state reweighted to th
+  function pgSum(th, cfg, outer, inner, thB = th, stepIS = false) {
     const H = cfg.H, n = 2 * W + 1;
-    const V = values(th, cfg, inner);
+    const V = values(thB, cfg, inner);
     let d = new Float64Array(n);
     const s = starts(cfg);
     for (const x of s) d[x + W] += 1 / s.length;
@@ -352,14 +373,15 @@ const RL = (() => {
       const wt = Math.pow(outer, t);
       for (let x = -W; x <= W; x++) {
         const dx = d[x + W]; if (dx === 0) continue;
-        const p = pRight(th, x), f = phi(x);
+        const p = pRight(th, x), pb = pRight(thB, x), f = phi(x);
         const xr = move(x, 1), xl = move(x, 0);
         const qr = reward(cfg, t, xr) + inner * V[t + 1][xr + W];
         const ql = reward(cfg, t, xl) + inner * V[t + 1][xl + W];
-        // sum_a pi(a) (1[a]-p) Q = p(1-p)(qr-ql)
-        const k = wt * dx * p * (1 - p) * (qr - ql);
+        // sum_a pi_mix(a) (1[a]-p) Q; equals p(1-p)(qr-ql) when the mix is the policy at th
+        const pa = stepIS ? p : pb;
+        const k = wt * dx * (pa * (1 - p) * qr - (1 - pa) * p * ql);
         grad[0] += k * f[0]; grad[1] += k * f[1];
-        nd[xr + W] += dx * p; nd[xl + W] += dx * (1 - p);
+        nd[xr + W] += dx * pb; nd[xl + W] += dx * (1 - pb);
       }
       d = nd;
     }
@@ -369,10 +391,14 @@ const RL = (() => {
   // true gradient of the objective whose contours are shown
   function trueGrad(th, cfg) { const g = objGamma(cfg); return pgSum(th, cfg, g, g); }
   // expected value of the estimator
-  function expectedEst(th, cfg) {
-    if (cfg.mode === 'undiscounted') return pgSum(th, cfg, 1, 1);
-    if (cfg.mode === 'absolute') return pgSum(th, cfg, cfg.gamma, cfg.gamma);
-    return pgSum(th, cfg, 1, cfg.gamma);
+  // thB: where the episodes were sampled; without importance weights the estimator's mean depends on it
+  // cfg.is: 'off' | 'step' (current-step ratio) | 'full' (cumulative ratio, unbiased)
+  function expectedEst(th, cfg, thB = th) {
+    if (cfg.is === 'full') thB = th;
+    const step = cfg.is === 'step';
+    if (cfg.mode === 'undiscounted') return pgSum(th, cfg, 1, 1, thB, step);
+    if (cfg.mode === 'absolute') return pgSum(th, cfg, cfg.gamma, cfg.gamma, thB, step);
+    return pgSum(th, cfg, 1, cfg.gamma, thB, step);
   }
 
   // Common random numbers so dragging theta morphs the batch smoothly
@@ -392,21 +418,41 @@ const RL = (() => {
     return { u0, u };
   }
 
-  function episode(th, cfg, nz, i) {
+  // draw one episode's states and actions at theta
+  function sampleRaw(th, cfg, nz, i) {
     const s = starts(cfg), H = cfg.H;
     const x0 = s[Math.min(s.length - 1, Math.floor(nz.u0[i] * s.length))];
-    const xs = [x0], as = [], ps = [], rs = [], sc = [];
+    const xs = [x0], as = [];
     let x = x0;
     for (let t = 0; t < H; t++) {
-      const p = pRight(th, x);
-      const a = nz.u[i * MAXH + t] < p ? 1 : 0;
-      const x1 = move(x, a);
-      as.push(a); ps.push(a ? p : 1 - p); sc.push(score(th, x, a));
-      rs.push(reward(cfg, t, x1)); xs.push(x1); x = x1;
+      const a = nz.u[i * MAXH + t] < pRight(th, x) ? 1 : 0;
+      x = move(x, a); as.push(a); xs.push(x);
     }
+    return { xs, as };
+  }
+  // evaluate the REINFORCE estimator for a fixed episode at (possibly different) theta
+  // importance weights for episodes drawn at thS:
+  //   'full': reward k is multiplied by rho_k = prod_{j<=k} q_j  (unbiased)
+  //   'step': the term for step t is multiplied by q_t only       (biased, low variance)
+  // where q_j = pi_th(a_j|x_j) / pi_thS(a_j|x_j)
+  function evalEpisode(raw, th, cfg, thS) {
+    const { xs, as } = raw, H = as.length, isMode = thS ? cfg.is : 'off';
+    const ps = [], rs = [], sc = [], q = [], rho = [];
+    let cum = 1;
+    for (let t = 0; t < H; t++) {
+      const p = pRight(th, xs[t]);
+      ps.push(as[t] ? p : 1 - p); sc.push(score(th, xs[t], as[t])); rs.push(reward(cfg, t, xs[t + 1]));
+      const pb = thS ? pRight(thS, xs[t]) : p;
+      const qt = isMode === 'off' ? 1 : (as[t] ? p / pb : (1 - p) / (1 - pb));
+      cum *= qt; q.push(qt); rho.push(cum);
+    }
+    const rw = isMode === 'full' ? rho : rs.map(() => 1);      // per-reward factor
+    const tw = isMode === 'step' ? q : rs.map(() => 1);         // per-term factor
+    const ratio = isMode === 'step' ? q : rho;                  // shown in the table
     const G = [], contrib = [], est = [0, 0];
     for (let t = 0; t < H; t++) {
-      let g = 0; for (let k = 0; k < H; k++) g += weight(cfg, t, k) * rs[k];
+      let g = 0; for (let k = 0; k < H; k++) g += weight(cfg, t, k) * rs[k] * rw[k];
+      g *= tw[t];
       G.push(g);
       const c = [g * sc[t][0], g * sc[t][1]];
       contrib.push(c); est[0] += c[0]; est[1] += c[1];
@@ -416,25 +462,30 @@ const RL = (() => {
     const u = [0, 0];
     for (let t = 0; t < H; t++) {
       let w = 0;
-      if (cfg.rewardMode === 'terminal') w = weight(cfg, t, H - 1);
-      else for (let k = 0; k < H; k++) w += weight(cfg, t, k);
+      if (cfg.rewardMode === 'terminal') w = weight(cfg, t, H - 1) * rw[H - 1];
+      else for (let k = 0; k < H; k++) w += weight(cfg, t, k) * rw[k];
+      w *= tw[t];
       u[0] += w * sc[t][0]; u[1] += w * sc[t][1];
     }
-    return { xs, as, ps, rs, sc, G, contrib, est, ret, u };
+    return { xs, as, ps, rs, sc, rho: ratio, G, contrib, est, ret, u };
   }
+  const episode = (th, cfg, nz, i) => evalEpisode(sampleRaw(th, cfg, nz, i), th, cfg);
 
+  function summarize(eps) {
+    const n = eps.length, m = [0, 0];
+    for (const e of eps) { m[0] += e.est[0] / n; m[1] += e.est[1] / n; }
+    let v = 0;
+    for (const e of eps) v += ((e.est[0] - m[0]) ** 2 + (e.est[1] - m[1]) ** 2);
+    return { eps, mean: m, sd: n > 1 ? Math.sqrt(v / (n - 1)) : 0 };
+  }
   function batch(th, cfg, nz) {
     const eps = [];
     for (let i = 0; i < cfg.N; i++) eps.push(episode(th, cfg, nz, i));
-    const m = [0, 0];
-    for (const e of eps) { m[0] += e.est[0] / cfg.N; m[1] += e.est[1] / cfg.N; }
-    let v = 0;
-    for (const e of eps) v += ((e.est[0] - m[0]) ** 2 + (e.est[1] - m[1]) ** 2);
-    const sd = cfg.N > 1 ? Math.sqrt(v / (cfg.N - 1)) : 0;
-    return { eps, mean: m, sd };
+    return summarize(eps);
   }
+  const evalBatch = (raws, th, cfg, thS) => summarize(raws.map(r => evalEpisode(r, th, cfg, thS)));
 
-  return { W, L, sig, phi, pRight, move, reward, score, weight, objGamma, J, trueGrad, expectedEst, noise, episode, batch, MAXN, MAXH };
+  return { W, L, sig, phi, pRight, move, reward, score, weight, objGamma, J, trueGrad, expectedEst, noise, episode, batch, sampleRaw, evalEpisode, evalBatch, MAXN, MAXH };
 })();
 if (typeof module !== 'undefined') module.exports = RL;
 
@@ -455,7 +506,7 @@ const fv = (v, d = 2) => `(${fmt(v[0], d)}, ${fmt(v[1], d)})`;
 const SUB = ['₀','₁','₂','₃','₄','₅','₆','₇','₈','₉'];
 const sub = n => String(n).split('').map(c => SUB[+c]).join('');
 
-const DEF = { H: 6, N: 10, S: 4, g: 2, rewardMode: 'terminal', c: 0, mode: 'undiscounted', gamma: 0.7, returns: 'togo' };
+const DEF = { H: 6, N: 10, S: 4, g: 2, rewardMode: 'terminal', c: 0, mode: 'undiscounted', gamma: 0.7, returns: 'togo', is: 'off' };
 const DEF_ALPHA = 0.25;
 const m = s => `<span class="m">${s}</span>`;
 const offTxt = c => c.c === 0 ? '' : ` ${c.c > 0 ? '+' : '−'} ${Math.abs(c.c)}`;
@@ -463,53 +514,50 @@ const rw = c => c.rewardMode === 'dense'
   ? `earns ${m('−|x − goal|' + offTxt(c))} after every step`
   : `is scored once, ${m('−|x − goal|' + offTxt(c))} at its final position`;
 
+// paragraphs that appear whenever their setting is active, in either scene
+function contextNotes(c) {
+  const out = [];
+  if (c.H === 1 && c.S === 0) out.push(`<p><b>One start state.</b> Every episode starts at x = 0, where ${m('φ(0) = (0, 1)')}. Every score vector is a multiple of that one feature vector, so every estimate lands on the vertical line through θ. In general an estimate can only point in directions spanned by the features of the states the episode visited.</p>`);
+  if (c.c !== 0) out.push(`<p><b>Reward offset.</b> Adding ${m('c = ' + (c.c > 0 ? '+' : '') + fmt(c.c, 0))} to ${c.rewardMode === 'dense' ? 'every reward' : 'the final reward'} adds ${m(c.rewardMode === 'dense' ? 'c·(H − t)' : 'c')} to each future total reward Gₜ, and that term times the score vector has mean zero, so the dashed and black arrows don't move. The spread does change: at this θ the tightest cloud comes at ${m('c ≈ ' + fmt(bestOffset(), 1))}. Choosing c well is the simplest kind of baseline.</p>`);
+  if (c.mode === 'delay') out.push(`<p><b>Discounting by delay.</b> Each reward credits earlier actions with weight ${m('γ^(k−t)')}, fading with the delay between action and reward; this is what most implementations do.${c.rewardMode === 'terminal' ? ' With the reward at the end only, it simply shrinks the weight of early steps by ' + m('γ^(H−1−t)') + '.' : ''} The contours still show the undiscounted objective, so the dashed arrow (the estimator's exact mean) moves off the black one: the estimator is biased for J, and in return the cloud is tighter. Slide γ to trade the bias and spread readouts against each other.</p>`);
+  if (c.is === 'full') out.push(`<p><b>Importance weights, cumulative ratio.</b> Episodes drawn at the hollow ring are reweighted for the policy at θ: reward k is multiplied by ${m('ρₖ = Πⱼ≤ₖ qⱼ')}, where ${m('qⱼ = π_θ(aⱼ|xⱼ) / π_ring(aⱼ|xⱼ)')}, the change in probability of the actions up to k. That makes the estimate unbiased at any θ, so the dashed arrow returns to the black one. The products can become very large, especially when θ is less decisive than the ring's policy, and then the spread grows; watch the ρₜ column in the step table.</p>`);
+  if (c.is === 'step') out.push(`<p><b>Importance weights, current-step ratio.</b> Each step's term is multiplied by only its own ${m('qₜ = π_θ(aₜ|xₜ) / π_ring(aₜ|xₜ)')}, as in PPO's surrogate objective. That corrects which action was chosen at each visited state, but not which states get visited or what happens afterwards: the future rewards still come from the ring's policy. So the dashed arrow moves close to the black one without reaching it. The single ratios stay moderate, so the spread usually stays well below the cumulative ratio's.</p>`);
+  if (c.mode === 'absolute') out.push(`<p><b>Discounting from the start.</b> The objective itself is now discounted, ${m('J_γ = E[Σₖ γᵏ rₖ]')}, and the contours change to match. The policy gradient theorem's ${m('γᵗ')} factor makes each reward count with weight ${m('γᵏ')}, set by when it arrives rather than by the delay, so the estimator is unbiased again for this objective. ${c.rewardMode === 'dense' ? 'Late rewards barely count: the late links of the chain shrink and the lower rows of the credit matrix fade.' : 'With the reward at the end only, as now, this just multiplies J by ' + m('γ^(H−1)') + ': the contours keep their shape and every arrow shrinks by the same factor. Switch to rewards after every step to see the difference.'}</p>`);
+  return out.length ? `<div class="ctx">${out.join('')}</div>` : '';
+}
+const tries = items => `<div class="tryit"><b>Things to try</b><ul>${items.map(t => `<li>${t}</li>`).join('')}</ul></div>`;
+
 const SCENES = [
-  { id: 'scene-1', name: 'Score vectors', cfg: { H: 1, N: 20 }, th: [-3, 1],
-    title: 'Score vectors in a contextual bandit',
-    html: c => `<p>With one step per episode this is a contextual bandit, and the start position is the context. Start with the score-vector panel.</p>
-<p>Each score vector is ${m('(𝟙[→] − p)·φ(x)')} with ${m('φ(x) = (x/3, 1)')}, so it always points along φ(x). Its direction tells you where the agent stood, its sign which way it moved, and its length how unlikely that move was.</p>
-<p>The dashed arrow is the score of the move not taken. The two always point in opposite directions with lengths in the ratio ${m('(1−p) : p')}, so the probability-weighted average is zero in every state. That is why REINFORCE is unbiased.</p>
-<p class="tryit">Step through episodes with ‹ ›. Starts far from the goal give long, steep arrows; starts near x = 0 give nearly vertical ones.</p>` },
-  { id: 'scene-2', name: 'Many episodes', cfg: { H: 1, N: 50 }, th: [-1, 0.5],
-    title: 'From one estimate to an average',
-    html: c => `<p>Each orange dot is one episode's gradient estimate: its score vector times its reward, drawn from θ at the arrow scale. The orange arrow is their average over the batch of ${c.N}.</p>
-<p>The black arrow is the exact gradient ∇J, computed by dynamic programming over all positions. The dashed arrow is the exact mean of the estimator; here it coincides with the black one.</p>
-<p class="tryit">Press Resample batch a few times, then change N: the orange arrow wanders around the black one, with error shrinking like 1/√N. Drag θ: the black arrow stays perpendicular to the contour bands.</p>` },
-  { id: 'scene-3', name: 'One start state', cfg: { H: 1, N: 50, S: 0 }, th: [-1, 0.5],
-    title: 'Estimates live in the span of the features',
-    html: c => `<p>Every episode now starts at x = 0, where ${m('φ(0) = (0, 1)')}. Every score vector is a multiple of that one feature vector, so every estimate lands on the vertical line through θ.</p>
-<p>In general a gradient estimate can only point in directions spanned by the features of the states the episode visited. A bandit with a single context can only adjust θ₂ here.</p>
-<p class="tryit">Raise the start range S, or raise H to 2 or 3: the agent reaches other positions, and the cloud spreads into two dimensions.</p>` },
-  { id: 'scene-4', name: 'Several steps', cfg: { H: 6 }, th: [-1, 0.5],
-    title: 'Building one episode’s estimate',
+  { name: 'Contextual bandit', cfg: { H: 1, N: 20 }, th: [-1, 0.5],
+    title: 'Contextual bandit: one step per episode',
+    html: c => `<p>With H = 1 each episode is a single decision. The start position is the context, and an episode's gradient estimate is its reward times one score vector.</p>
+<p>Each score vector is ${m('(𝟙[→] − p)·φ(x)')} with ${m('φ(x) = (x/3, 1)')}, so it points along φ(x): its direction tells you where the agent stood, its sign which way it moved, and its length how unlikely that move was. In the Score vectors panel the dashed arrow is the move not taken. The two point in opposite directions with lengths in the ratio ${m('(1−p) : p')}, so they average to zero in every state, which is why REINFORCE is unbiased.</p>
+<p>In the plane, each orange dot is one episode's estimate and the orange arrow is their average over the batch of ${c.N}. The black arrow is the exact gradient ∇J, and the dashed arrow, the estimator's exact mean, sits on it.</p>
+${contextNotes(c)}
+${tries([
+  'Step through episodes with ‹ ›: starts far from the goal give long, steep score vectors; starts near x = 0 give nearly vertical ones.',
+  'Under Display, pick a state to see its two score vectors at θ, then drag θ and watch their lengths change.',
+  'Press Resample batch a few times, then change N: the orange arrow wanders around the black one, with an error that shrinks like 1/√N.',
+  'Set the start range to 0: every estimate falls on one line.',
+  'Add a reward offset c and watch the spread readout.',
+  'Drag θ away from where the batch was sampled: the same episodes give new gradient estimates, and the dashed arrow (their exact mean) drifts off the black one. Then try the importance-weight options in the Estimator panel. With one step per episode, the current-step and cumulative ratios are the same, and both remove the bias.',
+])}` },
+  { name: 'Multi-step', cfg: { H: 6 }, th: [-1, 0.5],
+    title: 'Multi-step episodes',
     html: c => `<p>With H = ${c.H} the agent takes ${c.H} steps and ${rw(c)}. The violet chain is the selected episode's total gradient estimate, built one link per step; the links add tip to tail and end at that episode's dot.</p>
 ${c.rewardMode === 'dense'
   ? `<p>Link t is the score vector at step t times the future total reward ${m('Gₜ = rₜ + … + r' + sub(c.H - 1))}. Later steps have less reward ahead of them, so their links tend to be shorter.</p>`
   : `<p>Link t is the score vector at step t times the future total reward Gₜ. With one reward at the end, Gₜ is that final reward for every t, so every link is its score vector scaled by the same number.</p>`}
 ${c.c <= 0 ? '<p>Rewards are never positive here, so each link points against its score vector.</p>' : ''}
-<p class="tryit">Hover a table row to find its link, its position, its score vector and its credit column. ${c.rewardMode === 'dense' ? 'Switch the reward to “at the end only” and every link gets the same weight.' : 'Switch the reward to “after every step” and the links get different weights.'}</p>` },
-  { id: 'scene-6', name: 'Reward offset', live: true, cfg: { H: 6, N: 20, c: 10 }, th: [-1, 0.5],
-    title: 'Adding a constant to the reward',
-    html: c => `<p>A constant ${m('c = ' + (c.c > 0 ? '+' : '') + fmt(c.c, 0))} is added to ${c.rewardMode === 'dense' ? 'every reward' : 'the final reward'}. That adds ${m(c.rewardMode === 'dense' ? 'c·(H − t)' : 'c')} to each future total reward Gₜ, and the added term times the score vector has mean zero. So the dashed and black arrows don't move.</p>
-<p>The spread changes a lot. At this θ the tightest cloud comes at ${m('c ≈ ' + fmt(bestOffset(), 1))}, which roughly cancels the typical ${c.rewardMode === 'dense' ? 'future reward' : 'final reward'}.</p>
-<p class="tryit">Slide c and watch the spread readout. Choosing c well is the simplest kind of baseline.</p>` },
-  { id: 'scene-7', name: 'Discount by delay', cfg: { H: 8, N: 50, mode: 'delay', gamma: 0.5, rewardMode: 'dense' }, th: [-1, 0.5], alpha: 0.03,
-    title: 'Discounting by delay: less variance, some bias',
-    html: c => `<p>Each reward now credits earlier actions with weight ${m('γ^(k−t)')}, here with γ = ${c.gamma.toFixed(2)}, fading with the delay between action and reward. This is what most implementations do.${c.rewardMode === 'terminal' ? ' With the reward at the end only, as now, it simply shrinks the weight of early steps by ' + m('γ^(H−1−t)') + '.' : ''}</p>
-<p>The contours still show the undiscounted objective. The dashed arrow, the estimator's exact mean, has moved off the black arrow: this estimator is biased for J. In return the cloud is tighter.</p>
-<p class="tryit">Slide γ from 0 to 1 and watch the bias and spread readouts move in opposite directions.</p>` },
-  { id: 'scene-8', name: 'Discount from start', cfg: { H: 8, N: 50, mode: 'absolute', gamma: 0.7, rewardMode: 'dense' }, th: [-1, 0.5], alpha: 0.03,
-    title: 'Discounting from the start: a different objective',
-    html: c => `<p>Now the objective itself is discounted, ${m('J_γ = E[Σₖ γᵏ rₖ]')}, and the contours change to match. The policy gradient theorem's ${m('γᵗ')} factor makes each reward count with weight ${m('γᵏ')}, set by when it arrives, not by the delay.</p>
-${c.rewardMode === 'dense'
-  ? `<p>The estimator is unbiased again, for this objective. Rewards late in the episode barely count, so the late links of the chain shrink and the lower rows of the credit matrix fade. This scene pays a reward after every step; with one reward at the end, discounting from the start would only multiply J by ${m('γ^(H−1)')}.</p>`
-  : `<p>With the reward at the end only, as now, discounting from the start just multiplies J by ${m('γ^(H−1)')}: the contours keep their shape and every arrow shrinks by the same factor.</p>`}
-<p class="tryit">Switch between “by delay” and “from start” at the same γ. Compare the credit matrices: diagonals versus rows.</p>` },
-  { id: 'scene-9', name: 'Learning', cfg: { H: 6 }, th: [3, -2],
-    title: 'Following the noisy gradient',
-    html: c => `<p>This policy steps away from the goal: θ₁ > 0 means it moves right on the right and left on the left. Press Train. Each step draws a fresh batch of ${c.N} episode${c.N === 1 ? '' : 's'} and moves θ by ${m('α·ĝ')}.</p>
-<p>Progress is slow at first: a policy that pins the agent against a wall gets nearly the same return whatever θ is, so the gradient there is small. Then the path heads for the dashed line of policies that switch at the goal and runs out along it as the policy sharpens. The wobble in the path is the variance from the earlier scenes; roughly a third of the steps make J worse.</p>
-<p class="tryit">Raise N or lower α to smooth the path. Try a discounting mode and see where training settles.</p>` },
+${contextNotes(c)}
+${tries([
+  'Hover a row of the step table to find its link, its position, its score vector and its credit column.',
+  c.rewardMode === 'dense' ? 'Switch the reward to “at the end only”: every link then gets the same weight. While rewards come after every step, as now, gradients are about 4× larger, so lower α to around 0.05 before training.' : 'Switch the reward to “after every step”: the links then get different weights. Gradients are then about 4× larger, so lower α to around 0.05 before training.',
+  'Add a reward offset c: the expected gradient stays put while the spread changes.',
+  'Drag θ away from where the batch was sampled: the same episodes give new gradient estimates, and the dashed arrow (their exact mean) drifts off the black one. Then try the importance-weight options in the Estimator panel: the current-step ratio removes most of the bias with a modest spread, and the cumulative ratio removes all of it at the cost of occasional huge weights.',
+  'With rewards after every step, choose Discounting “by delay” and slide γ, then switch to “from start” at the same γ.',
+  'Drag θ to the lower right, near (3, −2), where the policy walks away from the goal, and press Train. Progress is slow at first, because a policy pinned against a wall gets nearly the same return whatever θ is.',
+])}` },
 ];
 SCENES.forEach((s, i) => { s.id = 'scene-' + (i + 1); });
 
@@ -528,7 +576,7 @@ const LABELS = {
   H: ['horizon', v => v], N: ['batch', v => v], S: ['starts', v => v === 0 ? 'x₀ = 0' : '±' + v], g: ['goal', v => fmt(v, 0)],
   rewardMode: ['reward', v => v === 'dense' ? 'after every step' : 'at the end only'], c: ['offset', v => (v > 0 ? '+' : '') + fmt(v, 0)],
   mode: ['discounting', v => ({ undiscounted: 'none', delay: 'by delay', absolute: 'from start' })[v]],
-  gamma: ['γ', v => v.toFixed(2)],
+  gamma: ['γ', v => v.toFixed(2)], is: ['importance weights', v => ({ off: 'off', step: 'current-step ratio', full: 'cumulative ratio' })[v]],
 };
 function renderNotes() {
   const s = SCENES[st.scene], ref = { ...DEF, ...s.cfg }, c = st.cfg, diffs = [];
@@ -542,15 +590,26 @@ function renderNotes() {
 }
 
 const st = {
-  th: [-1, 0.5], th0: [-1, 0.5], cfg: { ...DEF }, seed: 1, hover: -1,
+  th: [-1, 0.5], th0: [-1, 0.5], thSample: [-1, 0.5], cfg: { ...DEF }, seed: 1, hover: -1,
   scoreX: null, roundTurns: true, jitter: true, kFit: 1, scaleExp: 0, fit: 'cloud', alphaExp: Math.log10(DEF_ALPHA), path: [], training: false, scene: 0
 };
 let nz = R.noise(st.seed), B = null, TG = [0, 0], EG = [0, 0], Jv = 0;
 
+// episodes are drawn at thSample and stay fixed while theta moves; only their estimates are re-evaluated
+let raws = [];
+function resample(thAt = st.th) {
+  st.thSample = thAt.slice();
+  raws = [];
+  for (let i = 0; i < st.cfg.N; i++) raws.push(R.sampleRaw(st.thSample, st.cfg, nz, i));
+}
+function fitN() { // grow or shrink the batch, keeping existing episodes
+  if (raws.length > st.cfg.N) raws.length = st.cfg.N;
+  for (let i = raws.length; i < st.cfg.N; i++) raws.push(R.sampleRaw(st.thSample, st.cfg, nz, i));
+}
 function compute() {
-  B = R.batch(st.th, st.cfg, nz);
+  B = R.evalBatch(raws, st.th, st.cfg, st.thSample);
   TG = R.trueGrad(st.th, st.cfg);
-  EG = R.expectedEst(st.th, st.cfg);
+  EG = R.expectedEst(st.th, st.cfg, st.thSample);
   Jv = R.J(st.th, st.cfg);
   st.sel = clamp(st.sel, 0, st.cfg.N - 1);
 }
@@ -719,6 +778,12 @@ function renderPlane() {
     }
   }
   s += `</g>`;
+  if (Math.hypot(st.thSample[0] - th[0], st.thSample[1] - th[1]) > 1e-9) {
+    const sx = X(st.thSample[0]), sy = Y(st.thSample[1]);
+    s += `<line x1="${sx}" y1="${sy}" x2="${ox}" y2="${oy}" stroke="var(--ink)" stroke-width="1" stroke-dasharray="2 3" opacity="0.6"/>`;
+    s += `<circle cx="${sx}" cy="${sy}" r="6" fill="var(--surface)" fill-opacity="0.6" stroke="var(--ink)" stroke-width="1.6"/>`;
+    s += `<text x="${sx + 9}" y="${sy + 14}" font-size="11" fill="var(--ink-2)" stroke="var(--surface)" stroke-width="3" paint-order="stroke">episodes sampled here</text>`;
+  }
   s += `<circle cx="${ox}" cy="${oy}" r="6" fill="var(--ink)" stroke="var(--surface)" stroke-width="2.2" style="cursor:grab"/>`;
   s += `<text x="${ox - 9}" y="${oy - 9}" text-anchor="end" font-size="13" font-weight="600" fill="var(--ink)" stroke="var(--surface)" stroke-width="3" paint-order="stroke">θ</text>`;
   $('plane').innerHTML = s;
@@ -932,12 +997,12 @@ function renderMDP() {
 
 // ---------- table ----------
 function renderTable() {
-  const ep = B.eps[st.sel];
-  let h = `<thead><tr><th>t</th><th>xₜ</th><th>action</th><th>π(aₜ | xₜ)</th><th>rₜ</th><th title="Weighted reward credited to this step, per the credit matrix">Gₜ</th><th>score ∇log π</th><th>Gₜ · score</th></tr></thead><tbody>`;
+  const ep = B.eps[st.sel], is = st.cfg.is !== 'off';
+  let h = `<thead><tr><th>t</th><th>xₜ</th><th>action</th><th>π(aₜ | xₜ)</th><th>rₜ</th>${is ? (st.cfg.is === 'full' ? '<th title="Product of probability ratios π_θ / π_sample for actions 0…t; multiplies reward t">ρₜ</th>' : '<th title="Probability ratio π_θ / π_sample for action t; multiplies this step\'s term">qₜ</th>') : ''}<th title="Weighted reward credited to this step, per the credit matrix">Gₜ</th><th>score ∇log π</th><th>Gₜ · score</th></tr></thead><tbody>`;
   ep.as.forEach((a, t) => {
-    h += `<tr data-t="${t}"${st.hover === t ? ' class="hl"' : ''}><td>${t}</td><td>${fmt(ep.xs[t], 0)}</td><td>${a ? '→' : '←'}</td><td>${ep.ps[t].toFixed(2)}</td><td>${fmt(ep.rs[t], 0)}</td><td>${fmt(ep.G[t], 2)}</td><td>${fv(ep.sc[t])}</td><td>${fv(ep.contrib[t])}</td></tr>`;
+    h += `<tr data-t="${t}"${st.hover === t ? ' class="hl"' : ''}><td>${t}</td><td>${fmt(ep.xs[t], 0)}</td><td>${a ? '→' : '←'}</td><td>${ep.ps[t].toFixed(2)}</td><td>${fmt(ep.rs[t], 0)}</td>${is ? `<td>${ep.rho[t].toPrecision(3)}</td>` : ''}<td>${fmt(ep.G[t], 2)}</td><td>${fv(ep.sc[t])}</td><td>${fv(ep.contrib[t])}</td></tr>`;
   });
-  h += `</tbody><tfoot><tr><td>Σ</td><td></td><td></td><td></td><td>${fmt(ep.ret, 0)}</td><td></td><td></td><td>ĝ = ${fv(ep.est)}</td></tr></tfoot>`;
+  h += `</tbody><tfoot><tr><td>Σ</td><td></td><td></td><td></td><td>${fmt(ep.ret, 0)}</td>${is ? '<td></td>' : ''}<td></td><td></td><td>ĝ = ${fv(ep.est)}</td></tr></tfoot>`;
   $('table').innerHTML = h;
 }
 
@@ -959,7 +1024,7 @@ function renderStats() {
 
 function render() {
   renderPlane(); renderTraj(); renderScore(); renderCredit(); renderTable(); renderStats(); renderMDP();
-  if (SCENES[st.scene].live || renderNotes.dirty) { renderNotes(); renderNotes.dirty = false; }
+  if (st.cfg.c !== 0 || renderNotes.dirty) { renderNotes(); renderNotes.dirty = false; }
 }
 function renderHover() {
   renderPlane(); renderTraj(); renderScore(); renderCredit();
@@ -978,28 +1043,32 @@ function syncControls() {
   $('gamma').disabled = c.mode === 'undiscounted';
   document.querySelectorAll('input[name=rewardMode]').forEach(r => { r.checked = r.value === c.rewardMode; });
   document.querySelectorAll('input[name=mode]').forEach(r => { r.checked = r.value === c.mode; });
+  document.querySelectorAll('input[name=is]').forEach(r => { r.checked = r.value === c.is; });
   $('scale').value = st.scaleExp; $('scale_o').textContent = kText();
   $('alpha').value = st.alphaExp; $('alpha_o').textContent = Math.pow(10, st.alphaExp).toPrecision(2);
   $('trainBtn').textContent = st.training ? 'Pause' : 'Train';
 }
 function onCfg(key) {
   renderNotes.dirty = true;
+  if (key === 'H' || key === 'S') resample(); else if (key === 'N') fitN();
   compute();
   syncControls(); render();
 }
 RANGE_KEYS.forEach(k => $(k).addEventListener('input', e => { st.cfg[k] = Number(e.target.value); schedule(() => onCfg(k)); }));
+document.querySelectorAll('input[name=is]').forEach(r => r.addEventListener('change', () => { st.cfg.is = r.value; onCfg('is'); }));
 ['rewardMode', 'mode'].forEach(name => document.querySelectorAll(`input[name=${name}]`).forEach(r => r.addEventListener('change', () => { st.cfg[name] = r.value; onCfg(name); })));
 $('scale').addEventListener('input', e => { st.scaleExp = Number(e.target.value); syncControls(); schedule(render); });
 $('alpha').addEventListener('input', e => { st.alphaExp = Number(e.target.value); syncControls(); });
-$('resample').addEventListener('click', () => { st.seed++; nz = R.noise(st.seed); compute(); render(); });
-$('resetTheta').addEventListener('click', () => { stopTraining(); st.th = st.th0.slice(); st.path = []; compute(); syncControls(); render(); });
+$('resample').addEventListener('click', () => { st.seed++; nz = R.noise(st.seed); resample(); compute(); render(); });
+$('resetTheta').addEventListener('click', () => { stopTraining(); st.th = st.th0.slice(); st.path = []; resample(); compute(); syncControls(); render(); });
 $('clearPath').addEventListener('click', () => { st.path = []; render(); });
 function trainStep() {
   const a = Math.pow(10, st.alphaExp);
+  if (st.th[0] !== st.thSample[0] || st.th[1] !== st.thSample[1]) { st.seed++; nz = R.noise(st.seed); resample(); compute(); }
   st.path.push(st.th.slice());
   if (st.path.length > 2000) st.path.shift();
   st.th = [clamp(st.th[0] + a * B.mean[0], PL.x0, PL.x1), clamp(st.th[1] + a * B.mean[1], PL.y0, PL.y1)];
-  st.seed++; nz = R.noise(st.seed); compute(); render();
+  st.seed++; nz = R.noise(st.seed); resample(); compute(); render();
 }
 let timer = 0;
 function stopTraining() { st.training = false; clearInterval(timer); timer = 0; syncControls(); }
@@ -1023,11 +1092,14 @@ const plane = $('plane'), tip = $('tip');
 let dragging = false;
 function svgPt(e) { const p = plane.createSVGPoint(); p.x = e.clientX; p.y = e.clientY; return p.matrixTransform(plane.getScreenCTM().inverse()); }
 function setTheta(a, b) { st.th = [clamp(a, PL.x0, PL.x1), clamp(b, PL.y0, PL.y1)]; schedule(() => { compute(); render(); }); }
+plane.addEventListener('dragstart', e => e.preventDefault());
+document.addEventListener('selectstart', e => { if (dragging) e.preventDefault(); });
 plane.addEventListener('pointerdown', e => {
   const d = e.target.closest('[data-i]');
   if (d) { st.sel = +d.dataset.i; st.hover = -1; render(); return; }
   const p = svgPt(e);
   if (p.x < PL.l || p.x > PL.l + PL.w || p.y < PL.t || p.y > PL.t + PL.h) return;
+  e.preventDefault(); window.getSelection && window.getSelection().removeAllRanges();
   stopTraining(); dragging = true; plane.setPointerCapture(e.pointerId); tip.style.display = 'none';
   setTheta(IX(p.x), IY(p.y));
 });
@@ -1067,7 +1139,7 @@ function applyScene(i, updateHash = true) {
   st.seed = s.seed || 1; nz = R.noise(st.seed); st.sel = 0; st.hover = -1;
   st.scaleExp = 0; st.path = [];
   st.alphaExp = Math.log10(s.alpha || DEF_ALPHA);
-  compute(); st.sel = typicalEpisode(); refit(); syncControls(); render();
+  resample(); compute(); st.sel = typicalEpisode(); refit(); syncControls(); render();
   $('noteTitle').textContent = s.title; renderNotes();
   document.querySelectorAll('#scenes button').forEach((b, j) => b.setAttribute('aria-pressed', j === i ? 'true' : 'false'));
   if (updateHash && location.hash !== '#' + s.id) { try { history.replaceState(null, '', '#' + s.id); } catch (e) { location.hash = s.id; } }
@@ -1075,7 +1147,7 @@ function applyScene(i, updateHash = true) {
 $('restoreScene').addEventListener('click', () => applyScene(st.scene));
 $('scenes').innerHTML = SCENES.map((s, i) => `<button type="button" data-s="${i}" aria-pressed="false"><span class="n">${i + 1}</span>${s.name}</button>`).join('');
 $('scenes').addEventListener('click', e => { const b = e.target.closest('button'); if (b) applyScene(+b.dataset.s); });
-function fromHash() { const i = SCENES.findIndex(s => '#' + s.id === location.hash); return i >= 0 ? i : 3; }
+function fromHash() { const i = SCENES.findIndex(s => '#' + s.id === location.hash); return i >= 0 ? i : 1; }
 window.addEventListener('hashchange', () => applyScene(fromHash(), false));
 
 // theme changes
