@@ -1,0 +1,1134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>k-means Seeding and Swaps</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  /* Layout: controls rail | plot with status line | readouts rail. Two columns under 1180px, one under 760px. */
+  --bg:#f2f2ef;
+  --panel:#ffffff;
+  --plot:#fcfcfb;
+  --ink:#16181b;
+  --ink-2:#50545c;
+  --muted:#868a93;
+  --line:#dcdde1;
+  --accent:#3346b8;
+  --accent-ink:#ffffff;
+  --accent-soft:#e8ebfa;
+  --hl:#c27400;
+  --rm:#d03b3b;
+  --c1:#2a78d6; --c2:#eb6834; --c3:#1baf7a; --c4:#eda100;
+  --c5:#e87ba4; --c6:#008300; --c7:#6250d6; --c8:#e34948;
+  --font-body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --font-mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#111213; --panel:#1a1b1d; --plot:#161718; --ink:#ededea; --ink-2:#b8bac0;
+    --muted:#80838a; --line:#2d2f34; --accent:#8e9bff; --accent-ink:#111213; --accent-soft:#232848;
+    --hl:#f2b134; --rm:#e66767;
+    --c1:#3987e5; --c2:#d95926; --c3:#199e70; --c4:#c98500;
+    --c5:#d55181; --c6:#0ca30c; --c7:#9085e9; --c8:#e66767;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#111213; --panel:#1a1b1d; --plot:#161718; --ink:#ededea; --ink-2:#b8bac0;
+  --muted:#80838a; --line:#2d2f34; --accent:#8e9bff; --accent-ink:#111213; --accent-soft:#232848;
+  --hl:#f2b134; --rm:#e66767;
+  --c1:#3987e5; --c2:#d95926; --c3:#199e70; --c4:#c98500;
+  --c5:#d55181; --c6:#0ca30c; --c7:#9085e9; --c8:#e66767;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%}
+body{background:var(--bg);color:var(--ink);font:14px/1.45 var(--font-body)}
+header{display:flex;align-items:baseline;gap:6px 18px;flex-wrap:wrap;padding:14px 20px 12px;border-bottom:1px solid var(--line)}
+h1{font-size:18px;margin:0;font-weight:600;letter-spacing:-0.01em;text-wrap:balance}
+header p{margin:0;color:var(--ink-2);font-size:13px;max-width:90ch}
+.app{display:grid;grid-template-columns:282px minmax(0,1fr) 300px;gap:16px;padding:16px 20px 28px;align-items:start}
+@media (max-width:1180px){
+  .app{grid-template-columns:276px minmax(0,1fr)}
+  .readouts{grid-column:1 / -1;display:grid !important;grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+}
+@media (max-width:760px){.app{grid-template-columns:1fr;padding:12px 16px 24px}}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:8px}
+.controls section{padding:12px 14px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:9px}
+.controls section:last-child{border-bottom:0}
+h2{font-size:11.5px;text-transform:uppercase;letter-spacing:.07em;margin:0;color:var(--ink-2);font-weight:600;display:flex;gap:8px;align-items:baseline}
+h2 .num{font-family:var(--font-mono);color:var(--accent);font-weight:500}
+.hint{font-size:12px;color:var(--muted);margin:0;line-height:1.4}
+.row{display:grid;grid-template-columns:1fr auto;gap:0 8px;align-items:center}
+.row label{font-size:13px}
+.row output{font:12px var(--font-mono);color:var(--ink-2);font-variant-numeric:tabular-nums}
+.row input[type=range]{grid-column:1 / -1;width:100%;margin:2px 0 0;accent-color:var(--accent)}
+.btns{display:flex;flex-wrap:wrap;gap:6px}
+button{font:500 13px var(--font-body);padding:6px 10px;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer;line-height:1.2}
+button:hover:not(:disabled){border-color:var(--ink-2)}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+button.primary:hover:not(:disabled){filter:brightness(1.08);border-color:var(--accent)}
+button:disabled{opacity:.42;cursor:not-allowed}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.seg{display:flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.seg input{position:absolute;opacity:0;pointer-events:none}
+.seg label{flex:1;text-align:center;font-size:13px;padding:5px 8px;cursor:pointer;color:var(--ink-2)}
+.seg label + input + label,.seg input + label ~ label{border-left:1px solid var(--line)}
+.seg input:checked + label{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.seg input:focus-visible + label{outline:2px solid var(--accent);outline-offset:-2px}
+.field{display:grid;grid-template-columns:1fr minmax(0,auto);gap:8px;align-items:center;font-size:13px}
+select,input[type=number]{font:13px var(--font-body);padding:4px 6px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);max-width:100%}
+input[type=number]{width:72px;font-family:var(--font-mono)}
+.inline{display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:13px}
+.checks{display:flex;flex-direction:column;gap:5px}
+.checks label{display:flex;gap:7px;align-items:center;font-size:13px}
+.checks input{accent-color:var(--accent)}
+.stage{overflow:hidden}
+#plotWrap{position:relative;width:100%}
+#plot{display:block;width:100%;background:var(--plot)}
+.status{display:flex;gap:12px;align-items:flex-start;padding:10px 14px 12px;border-top:1px solid var(--line);min-height:70px}
+.pill{font:500 11px var(--font-mono);padding:3px 9px;border-radius:999px;white-space:nowrap;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent);margin-top:1px}
+#msg{margin:0;font-size:13.5px;max-width:78ch}
+#msg b{font-weight:600}
+#msg .num{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+.readouts{display:flex;flex-direction:column;gap:16px}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);overflow:hidden}
+.stat{background:var(--panel);padding:10px 12px;min-width:0}
+.stat .k{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.stat .v{font:500 19px/1.3 var(--font-mono);font-variant-numeric:tabular-nums}
+.stat .s{font-size:12px;color:var(--ink-2)}
+.chart-card{padding:12px 14px;display:flex;flex-direction:column;gap:8px}
+.chart-card h3,.notes h3{margin:0;font-size:13px;font-weight:600}
+#chartWrap{position:relative;width:100%}
+#costChart{display:block;width:100%}
+.legend{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12px;color:var(--ink-2)}
+.legend span{display:inline-flex;align-items:center;gap:5px}
+.legend i{display:inline-block;width:9px;height:9px;border-radius:50%}
+.legend i.dash{width:14px;height:0;border-radius:0;border-top:1.5px dashed var(--ink-2)}
+.legend i.line{width:14px;height:0;border-radius:0;border-top:2px solid}
+.legend i.hollow{border:1.5px solid var(--muted);background:transparent}
+#tip{position:absolute;pointer-events:none;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:5px 8px;font-size:12px;box-shadow:0 2px 8px rgba(0,0,0,.12);white-space:nowrap;display:none;z-index:2}
+#tip .num{font-family:var(--font-mono)}
+.notes{padding:12px 14px;font-size:13px;display:flex;flex-direction:column;gap:8px}
+.glyphs{display:grid;grid-template-columns:22px 1fr;gap:5px 8px;align-items:center;font-size:12.5px;color:var(--ink-2)}
+.notes ol{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px;color:var(--ink-2)}
+.notes ol b{color:var(--ink);font-weight:600}
+#dataSec{position:relative}
+#dataSec.locked > *{opacity:.38}
+#dataSec.locked::after{content:attr(data-lock);position:absolute;left:12px;right:12px;top:50%;transform:translateY(-50%);padding:10px 12px;border-radius:6px;background:var(--panel);border:1.5px solid var(--accent);color:var(--ink);font-size:13px;font-weight:500;line-height:1.4;text-align:center;box-shadow:0 2px 10px rgba(0,0,0,.12);pointer-events:none}
+#nestSec.active{background:var(--accent-soft)}
+button.toggle{width:100%;text-align:left}
+button.toggle b{font-weight:600;color:var(--accent)}
+.foot{font-size:12px;color:var(--muted);margin:0}
+@media (prefers-reduced-motion:reduce){*{scroll-behavior:auto}}
+</style>
+</head>
+<body>
+<header>
+  <h1>k-means seeding, Lloyd, and swap local search</h1>
+  <p>Generate 2-D Gaussian clusters, seed centers at random or with k-means++, run Lloyd's algorithm, then improve the result with LocalSearch++ swaps (Lattanzi &amp; Sohler, 2019).</p>
+</header>
+
+<main class="app">
+  <!-- Controls -->
+  <aside class="controls panel" aria-label="Controls">
+    <section id="dataSec" data-lock="Locked while reclustering. To change the data, end nested mode with the button in panel 5.">
+      <h2><span class="num">1</span>Data</h2>
+      <div class="row"><label for="K">True clusters K</label><output id="K_o" for="K"></output>
+        <input type="range" id="K" min="1" max="20" step="1" value="8"></div>
+      <div class="row"><label for="N">Points</label><output id="N_o" for="N"></output>
+        <input type="range" id="N" min="100" max="2000" step="50" value="800"></div>
+      <div class="row"><label for="scale">Cluster size (overlap)</label><output id="scale_o" for="scale"></output>
+        <input type="range" id="scale" min="0" max="100" step="1" value="38"></div>
+      <div class="row"><label for="elong">Elongation</label><output id="elong_o" for="elong"></output>
+        <input type="range" id="elong" min="0" max="100" step="1" value="25"></div>
+      <div class="row"><label for="uneven">Unequal variances</label><output id="uneven_o" for="uneven"></output>
+        <input type="range" id="uneven" min="0" max="100" step="1" value="45"></div>
+      <div class="btns"><button id="resample">Resample dataset</button></div>
+      <p class="hint">Centers ~ N(0, I). Orientations are random. The sliders reshape the same draw; Resample makes a new one.</p>
+    </section>
+
+    <section>
+      <h2><span class="num">2</span>Initialize</h2>
+      <div class="seg" role="radiogroup" aria-label="Seeding method">
+        <input type="radio" name="method" id="m_random" value="random"><label for="m_random">Random points</label>
+        <input type="radio" name="method" id="m_kpp" value="kpp" checked><label for="m_kpp">k-means++</label>
+      </div>
+      <div class="row"><label for="k">Centers k</label><output id="k_o" for="k"></output>
+        <input type="range" id="k" min="1" max="30" step="1" value="8"></div>
+      <div class="btns">
+        <button id="seedOne" class="primary">Add one center</button>
+        <button id="seedAll">Finish seeding</button>
+        <button id="seedReset">Restart</button>
+      </div>
+    </section>
+
+    <section>
+      <h2><span class="num">3</span>Fit with Lloyd</h2>
+      <div class="btns">
+        <button id="lloydStep" class="primary">Step</button>
+        <button id="lloydPlay">Play</button>
+        <button id="lloydRun">Run to convergence</button>
+      </div>
+      <div class="row"><label for="speed">Animation speed</label><output id="speed_o" for="speed"></output>
+        <input type="range" id="speed" min="1" max="10" step="1" value="4"></div>
+    </section>
+
+    <section>
+      <h2><span class="num">4</span>Swap local search</h2>
+      <div class="field"><label for="candidate">Candidate sampling</label>
+        <select id="candidate"><option value="d2">D² (LocalSearch++)</option><option value="uniform">Uniform point</option></select></div>
+      <div class="field"><label for="removal">Center to remove</label>
+        <select id="removal"><option value="best">Best (LocalSearch++)</option><option value="random">Random</option></select></div>
+      <div class="field"><label for="polish">After an accepted swap</label>
+        <select id="polish"><option value="converge">Lloyd to convergence</option><option value="one">One Lloyd step</option><option value="none">Nothing (pure LS++)</option></select></div>
+      <div class="btns">
+        <button id="swapStage" class="primary">Show D² weights</button>
+        <button id="swapOne">Animate one swap</button>
+      </div>
+      <div class="inline"><button id="swapRun">Run</button><input type="number" id="swapN" min="1" max="10000" value="50" aria-label="Number of swaps"><label for="swapN">swaps</label></div>
+    </section>
+
+    <section id="nestSec">
+      <h2><span class="num">5</span>Recluster the centers</h2>
+      <p class="hint">Pruning an oversampled seeding is the same k-means problem, one level up: each current center becomes a data point, weighted by how many points it serves. Panels 2–4 then cluster those points down to k (K by default). This is the second stage of k-means|| and of Guha et al.'s streaming reduction; the guarantee needs the weights. While this mode is on, the vs-ground-truth tile and the purple chart line score the new centers on the original data.</p>
+      <div class="checks">
+        <label><input type="checkbox" id="weighted" checked> Weight each center by its cluster size</label>
+        <label><input type="checkbox" id="showOrig"> Show original points faintly</label>
+      </div>
+      <div class="btns"><button id="nestBtn" class="primary">Recluster these centers</button></div>
+      <p class="hint" id="nestHint"></p>
+    </section>
+
+    <section>
+      <h2>Display</h2>
+      <div class="checks">
+        <label><input type="checkbox" id="voronoi" checked> Shade Voronoi regions</label>
+        <label><input type="checkbox" id="ellipses"> True cluster 2σ ellipses</label>
+        <label><input type="checkbox" id="fitEllipses"> Fitted cluster 2σ ellipses</label>
+      </div>
+      <div class="btns"><button id="colorBy" class="toggle" aria-pressed="false">Point colors: <b>nearest center</b></button></div>
+    </section>
+  </aside>
+
+  <!-- Plot -->
+  <div class="stage panel">
+    <div id="plotWrap"><canvas id="plot" aria-label="Scatter plot of the data and the current centers"></canvas></div>
+    <div class="status" aria-live="polite"><span class="pill" id="phase">Seeding</span><p id="msg"></p></div>
+  </div>
+
+  <!-- Readouts -->
+  <aside class="readouts" aria-label="Readouts">
+    <div class="stats panel">
+      <div class="stat"><div class="k" id="st_cost_k">Cost (SSE)</div><div class="v" id="st_cost">—</div><div class="s" id="st_cost_s">&nbsp;</div></div>
+      <div class="stat"><div class="k">vs ground truth</div><div class="v" id="st_ratio">—</div><div class="s" id="st_ratio_s">&nbsp;</div></div>
+      <div class="stat"><div class="k">Lloyd iterations</div><div class="v" id="st_lloyd">0</div><div class="s" id="st_lloyd_s">&nbsp;</div></div>
+      <div class="stat"><div class="k">Swaps accepted</div><div class="v" id="st_swaps">0</div><div class="s" id="st_swaps_s">of 0 tried</div></div>
+    </div>
+
+    <div class="chart-card panel">
+      <h3>Cost after each step (log scale)</h3>
+      <div id="chartWrap"><canvas id="costChart" aria-label="Cost history chart"></canvas><div id="tip"></div></div>
+      <div class="legend">
+        <span><i style="background:var(--c1)"></i>Seeding</span>
+        <span><i style="background:var(--c2)"></i>Lloyd</span>
+        <span><i style="background:var(--c3)"></i>Swap accepted</span>
+        <span><i class="hollow"></i>Swap rejected</span>
+        <span><i style="background:var(--c4)"></i>Reclustered</span>
+        <span id="lgOrig" hidden><i class="line" style="border-color:var(--c7)"></i>Original-data cost</span>
+        <span><i class="dash"></i>Ground truth</span>
+      </div>
+    </div>
+
+    <div class="notes panel">
+      <h3>Reading the plot</h3>
+      <div class="glyphs">
+        <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8" fill="var(--plot)"/><circle cx="10" cy="10" r="6" fill="var(--c1)" stroke="var(--ink)" stroke-width="1.2"/></svg><span>Center (color = its cluster)</span>
+        <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="3" fill="var(--c2)" opacity=".55"/><circle cx="10" cy="10" r="7.5" fill="var(--c2)" opacity=".3"/></svg><span>Disc area ∝ probability of being picked next</span>
+        <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.5" fill="none" stroke="var(--accent)" stroke-width="2"/></svg><span>Point just picked as a seed</span>
+        <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 1.5l2.4 5.2 5.6.6-4.2 3.8 1.2 5.6-5-2.9-5 2.9 1.2-5.6L2 7.3l5.6-.6z" fill="var(--hl)" stroke="var(--ink)" stroke-width="1"/></svg><span>Swap candidate</span>
+        <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8" fill="none" stroke="var(--rm)" stroke-width="2" stroke-dasharray="3 2.5"/></svg><span>Center chosen for removal</span>
+      </div>
+      <h3>Things to try</h3>
+      <ol>
+        <li><b>Random seeding with unequal variances.</b> Small, tight clusters often get no center, and Lloyd can't move a center across a gap.</li>
+        <li><b>D² vs uniform candidates.</b> Run 50 swaps of each from the same Lloyd optimum. Uniform proposals mostly land in big clusters that are already covered.</li>
+        <li><b>Oversample (k &gt; K).</b> Cost drops below the ground-truth line: extra centers always lower the objective. Pruning back to K is the reclustering step.</li>
+        <li><b>Random removal.</b> Many more swaps are rejected, because the deleted center was usually doing useful work.</li>
+        <li><b>Oversample, then recluster.</b> Seed k = 2K with k-means++, run Lloyd, recluster to K, then end the mode and polish. Compare with plain k-means++ at k = K, and try unchecking the weights.</li>
+      </ol>
+      <p class="foot">Ground truth = cost of the generating partition with its sample means, using K centers. It is an upper bound on the optimal K-center cost.</p>
+    </div>
+  </aside>
+</main>
+
+<script>
+(() => {
+'use strict';
+const $ = id => document.getElementById(id);
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+/* ---------- Random numbers ---------- */
+function mulberry32(a){ return function(){ a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+function gaussFrom(rand){ let spare = null; return () => { if (spare !== null){ const s = spare; spare = null; return s; } let u, v, s; do { u = rand()*2-1; v = rand()*2-1; s = u*u+v*v; } while (s >= 1 || s === 0); const m = Math.sqrt(-2*Math.log(s)/s); spare = v*m; return u*m; }; }
+const newSeed = () => (Math.floor(Math.random()*4294967296) ^ (Date.now() & 0xffffffff)) >>> 0;
+let algoRand = mulberry32(newSeed());
+
+/* ---------- Parameters ---------- */
+const P = { K:8, N:800, scaleV:38, elongV:25, unevenV:45, method:'kpp', kOffset:0, kOffsetN:0,
+  candidate:'d2', removal:'best', polish:'converge', speed:4, voronoi:true, ellipses:false, fitEllipses:false,
+  colorBy:'assign', weighted:true, showOrig:false };
+const scaleOf = v => 0.03 * Math.pow(20, v/100);          // cluster std, 0.03 .. 0.6
+const kOf = () => D.isNested ? clamp(P.K + P.kOffsetN, 1, D.N) : clamp(P.K + P.kOffset, 1, 30);
+
+/* ---------- Data ---------- */
+// D is the active problem. Douter is the generated dataset; in nested mode D holds the outer centers as weighted points.
+const Douter = { lat:null, X:null, w:null, N:0, label:null, clusters:[], truthCost:NaN, sigRatio:1, aspect:1, bx0:-1, bx1:1, by0:-1, by1:1, isNested:false };
+let D = Douter, Mouter = null;
+let dataSeed = newSeed();
+
+function genLatent(){
+  const r = mulberry32(dataSeed), g = gaussFrom(r);
+  const K = P.K, N = P.N, mu = [], th = [], u = [];
+  for (let k = 0; k < K; k++){ mu.push([g(), g()]); th.push(r()*Math.PI); u.push(r()*2-1); }
+  const label = new Int32Array(N), z1 = new Float64Array(N), z2 = new Float64Array(N);
+  for (let i = 0; i < N; i++){ label[i] = i % K; z1[i] = g(); z2[i] = g(); }
+  D.lat = { K, N, mu, th, u, label, z1, z2 };
+}
+
+function realize(){
+  const L = D.lat, K = L.K, N = L.N;
+  const s0 = scaleOf(P.scaleV);
+  const A = Math.exp((P.elongV/100) * Math.log(12)), sa = Math.sqrt(A);
+  const sig = L.u.map(u => s0 * Math.exp((P.unevenV/100) * Math.log(6) * u));
+  D.aspect = A; D.sigRatio = Math.max(...sig) / Math.min(...sig);
+  D.clusters = L.mu.map((m, k) => ({ mx:m[0], my:m[1], th:L.th[k], s1:sig[k]*sa, s2:sig[k]/sa }));
+  const X = new Float64Array(2*N);
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (let i = 0; i < N; i++){
+    const c = D.clusters[L.label[i]];
+    const a = L.z1[i]*c.s1, b = L.z2[i]*c.s2, cs = Math.cos(c.th), sn = Math.sin(c.th);
+    const x = c.mx + cs*a - sn*b, y = c.my + sn*a + cs*b;
+    X[2*i] = x; X[2*i+1] = y;
+    if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+  }
+  const span = Math.max(x1-x0, y1-y0, 0.5), pad = 0.05*span;
+  D.bx0 = x0-pad; D.bx1 = x1+pad; D.by0 = y0-pad; D.by1 = y1+pad;
+  D.X = X; D.N = N; D.label = L.label; D.w = new Float64Array(N).fill(1); D.wsum = N;
+  const sx = new Float64Array(K), sy = new Float64Array(K), n = new Float64Array(K);
+  for (let i = 0; i < N; i++){ const k = L.label[i]; sx[k] += X[2*i]; sy[k] += X[2*i+1]; n[k]++; }
+  let cost = 0;
+  for (let i = 0; i < N; i++){ const k = L.label[i]; const dx = X[2*i]-sx[k]/n[k], dy = X[2*i+1]-sy[k]/n[k]; cost += dx*dx+dy*dy; }
+  D.truthCost = cost;
+}
+
+/* ---------- Model state ---------- */
+let M = null;
+function resetModel(){
+  const N = D.N;
+  M = { C:[], k:kOf(), method:P.method, assign:new Int32Array(N).fill(-1),
+    d1:new Float64Array(N).fill(Infinity), d2:new Float64Array(N).fill(Infinity), cost:Infinity, origCost:Infinity,
+    phase:'seeding', probs:null, chosen:new Uint8Array(N), lastPick:-1,
+    lloydIters:0, converged:false, swapsTried:0, swapsAccepted:0, history:[], swap:null, trails:null, msg:'' };
+  M.probs = seedProbs();
+  const nest = D.isNested
+    ? `Nested mode: the ${D.N} points are the previous centers${P.weighted ? ', each with area ∝ its weight (points it served)' : ', all weighted equally'}. `
+    : `The plain dataset: ${D.N} points from K = ${P.K} Gaussian clusters. `;
+  setMsg(nest + (M.method === 'kpp'
+    ? `Next: seed <b>${M.k}</b> centers with <b>k-means++</b>. The first center is drawn ${D.isNested && P.weighted ? '∝ weight' : 'uniformly'}; each later one with probability ∝ ${D.isNested && P.weighted ? 'weight × ' : ''}D², the squared distance to the nearest center already chosen. Point areas will show those probabilities.`
+    : `Next: seed <b>${M.k}</b> centers at <b>random points</b>${D.isNested && P.weighted ? ' (drawn ∝ weight)' : ''}. Big clusters tend to collect extra centers, and small ones can get none.`));
+}
+
+function origCostOf(C){
+  const X = Douter.X, N = Douter.N, k = C.length; if (!k) return Infinity;
+  let s = 0;
+  for (let i = 0; i < N; i++){ const x = X[2*i], y = X[2*i+1]; let b = Infinity; for (let j = 0; j < k; j++){ const dx = x-C[j][0], dy = y-C[j][1], d = dx*dx+dy*dy; if (d < b) b = d; } s += b; }
+  return s;
+}
+
+function assignAll(){
+  const C = M.C, k = C.length, X = D.X, N = D.N, w = D.w;
+  let cost = 0;
+  for (let i = 0; i < N; i++){
+    const x = X[2*i], y = X[2*i+1];
+    let b1 = Infinity, b2 = Infinity, j1 = -1;
+    for (let j = 0; j < k; j++){
+      const dx = x - C[j][0], dy = y - C[j][1], d = dx*dx + dy*dy;
+      if (d < b1){ b2 = b1; b1 = d; j1 = j; } else if (d < b2) b2 = d;
+    }
+    M.assign[i] = j1; M.d1[i] = b1; M.d2[i] = b2; cost += w[i]*b1;
+  }
+  M.cost = k ? cost : Infinity;
+  M.origCost = D.isNested ? origCostOf(C) : M.cost;
+}
+
+function pushHist(kind, label){ M.history.push({ kind, cost:M.cost, orig:M.origCost, label }); }
+const ratioHTML = () => `<span class="num">${(M.origCost / Douter.truthCost).toFixed(2)}×</span> ground truth${D.isNested ? ' on the original data' : ''}`;
+
+function sampleIdx(p){
+  let tot = 0; for (let i = 0; i < p.length; i++) tot += p[i];
+  let r = algoRand() * tot;
+  for (let i = 0; i < p.length; i++){ r -= p[i]; if (r < 0) return i; }
+  for (let i = p.length-1; i >= 0; i--) if (p[i] > 0) return i;
+  return p.length-1;
+}
+
+/* ---------- Seeding ---------- */
+function seedProbs(){
+  const N = D.N, w = D.w, p = new Float64Array(N);
+  if (M.method === 'random' || M.C.length === 0){
+    let s = 0; for (let i = 0; i < N; i++) if (!M.chosen[i]) s += w[i];
+    for (let i = 0; i < N; i++) p[i] = M.chosen[i] || !(s > 0) ? 0 : w[i]/s;
+    return p;
+  }
+  let s = 0; for (let i = 0; i < N; i++) s += w[i]*M.d1[i];
+  if (!(s > 0)){ p.fill(1/N); return p; }
+  for (let i = 0; i < N; i++) p[i] = w[i]*M.d1[i] / s;
+  return p;
+}
+
+function seedStep(){
+  if (M.phase !== 'seeding') return;
+  const i = sampleIdx(M.probs);
+  M.C.push([D.X[2*i], D.X[2*i+1]]); M.chosen[i] = 1; M.lastPick = i;
+  assignAll();
+  pushHist('seed', `Seed ${M.C.length}`);
+  if (M.C.length >= M.k){
+    M.phase = 'ready'; M.probs = null;
+    let extra = '';
+    if (D.isNested) extra = ` End nested mode in panel 5 to carry these centers back to the original data.`;
+    else if (M.k > P.K) extra = ` With k &gt; K the cost can fall below the ground-truth line, because extra centers always lower the objective. Panel 5 can recluster them down to K.`;
+    else if (M.k < P.K) extra = ` With k &lt; K some true clusters must share a center.`;
+    setMsg(`Seeding done: <b>${M.k}</b> centers, cost <span class="num">${fmt(M.cost)}</span> (${ratioHTML()}). Next, run Lloyd's algorithm.${extra}`);
+  } else {
+    M.probs = seedProbs();
+    setMsg(M.method === 'kpp'
+      ? `Center <b>${M.C.length}</b> of ${M.k} placed (ringed). Points near existing centers shrink because they are now unlikely picks. Big discs are far from every center.`
+      : `Center <b>${M.C.length}</b> of ${M.k} placed (ringed). The next pick is again uniform over the remaining points, regardless of where centers already are.`);
+  }
+}
+
+/* ---------- Lloyd ---------- */
+function lloydCore(){
+  const k = M.C.length, X = D.X, N = D.N, w = D.w;
+  const sx = new Float64Array(k), sy = new Float64Array(k), n = new Float64Array(k);
+  for (let i = 0; i < N; i++){ const j = M.assign[i]; sx[j] += w[i]*X[2*i]; sy[j] += w[i]*X[2*i+1]; n[j] += w[i]; }
+  let empty = 0;
+  for (let j = 0; j < k; j++){ if (n[j] > 0) M.C[j] = [sx[j]/n[j], sy[j]/n[j]]; else empty++; }
+  const prev = M.assign.slice();
+  assignAll();
+  let changed = 0; for (let i = 0; i < N; i++) if (prev[i] !== M.assign[i]) changed++;
+  M.lloydIters++;
+  M.converged = changed === 0;
+  return { changed, empty };
+}
+
+function lloydStep(){
+  if (M.phase !== 'ready' || M.converged) return null;
+  M.swap = null; M.lastPick = -1;
+  const before = M.C.map(c => c.slice());
+  const r = lloydCore();
+  M.trails = before.map((o, j) => [o, M.C[j].slice()]);
+  pushHist('lloyd', `Lloyd iteration ${M.lloydIters}`);
+  if (M.converged){
+    setMsg(`Converged after <b>${M.lloydIters}</b> iterations: no point changed cluster, so this is a fixed point of Lloyd's algorithm. Cost <span class="num">${fmt(M.cost)}</span> (${ratioHTML()}). Swaps can move away from it.`);
+  } else {
+    setMsg(`Iteration <b>${M.lloydIters}</b>: each center moved to the mean of its points (trails show the move), then points were reassigned to their nearest center. <span class="num">${r.changed}</span> points changed cluster${r.empty ? `; ${r.empty} empty cluster(s) kept their center` : ''}. Cost <span class="num">${fmt(M.cost)}</span>.`);
+  }
+  return r;
+}
+
+/* ---------- Swaps ---------- */
+function swapProbs(){
+  const N = D.N, w = D.w, p = new Float64Array(N);
+  if (P.candidate === 'uniform'){ for (let i = 0; i < N; i++) p[i] = w[i]/D.wsum; return p; }
+  let s = 0; for (let i = 0; i < N; i++) s += w[i]*M.d1[i];
+  if (!(s > 0)){ p.fill(1/N); return p; }
+  for (let i = 0; i < N; i++) p[i] = w[i]*M.d1[i] / s;
+  return p;
+}
+
+// Cost of (C minus center j) plus candidate, for every j, in O(N) given nearest/second-nearest distances.
+function removalCosts(ci){
+  const X = D.X, N = D.N, w = D.w, k = M.C.length, cx = X[2*ci], cy = X[2*ci+1];
+  const extra = new Float64Array(k); let base = 0;
+  for (let i = 0; i < N; i++){
+    const dx = X[2*i]-cx, dy = X[2*i+1]-cy, dp = dx*dx+dy*dy;
+    const m1 = Math.min(M.d1[i], dp); base += w[i]*m1;
+    extra[M.assign[i]] += w[i]*(Math.min(M.d2[i], dp) - m1);
+  }
+  return Array.from(extra, e => base + e);
+}
+const argmin = a => { let b = 0; for (let i = 1; i < a.length; i++) if (a[i] < a[b]) b = i; return b; };
+
+function polish(withTrails){
+  if (P.polish === 'none') return 0;
+  const before = M.C.map(c => c.slice()); let it = 0;
+  if (P.polish === 'one'){ lloydCore(); it = 1; }
+  else { M.converged = false; while (!M.converged && it < 300){ lloydCore(); it++; } }
+  if (withTrails) M.trails = before.map((o, j) => [o, M.C[j].slice()]);
+  pushHist('lloyd', `Lloyd polish (${it} iteration${it === 1 ? '' : 's'})`);
+  return it;
+}
+
+const isTerminal = S => !!S && ((S.stage === 4 && (!S.accept || !S.willPolish)) || S.stage === 5);
+
+function swapStage(){
+  if (M.phase !== 'ready') return;
+  let S = M.swap;
+  if (!S || isTerminal(S)){
+    M.trails = null; M.lastPick = -1;
+    M.swap = S = { stage:1, probs:swapProbs() };
+    setMsg(P.candidate === 'd2'
+      ? `Swap step 1 of 4. Each point's area is proportional to its <b>D² weight</b>: squared distance to its nearest center, normalized. Big discs mark points the current centers serve badly; these are the likely proposals.`
+      : `Swap step 1 of 4. <b>Uniform</b> candidates: every point is equally likely, as in naive split heuristics. Proposals mostly land where the data is dense, whether or not it is already covered.`);
+    return;
+  }
+  if (S.stage === 1){
+    S.cand = sampleIdx(S.probs); S.stage = 2;
+    const share = S.probs[S.cand] * D.N;
+    setMsg(`Step 2: sampled the candidate (star). Its weight is <span class="num">${share.toFixed(2)}×</span> the average point's. The candidate will be added as a new center if the swap is accepted.`);
+    return;
+  }
+  if (S.stage === 2){
+    S.costs = removalCosts(S.cand); S.best = argmin(S.costs);
+    S.j = P.removal === 'best' ? S.best : Math.floor(algoRand() * M.C.length);
+    S.oldCost = M.cost; S.newCost = S.costs[S.j]; S.stage = 3;
+    const pct = (S.newCost/S.oldCost - 1) * 100;
+    setMsg(`Step 3: for each center, the labels show how the cost would change if that center were removed and the candidate added. ${P.removal === 'best'
+      ? `LocalSearch++ removes the one with the lowest resulting cost (red ring): <span class="num">${fmtPct(pct)}</span>.`
+      : `With random removal, the ringed center was picked at random: <span class="num">${fmtPct(pct)}</span>. The best choice would give <span class="num">${fmtPct((S.costs[S.best]/S.oldCost-1)*100)}</span>.`}`);
+    return;
+  }
+  if (S.stage === 3){
+    S.accept = S.newCost < S.oldCost * (1 - 1e-12);
+    S.willPolish = S.accept && P.polish !== 'none';
+    M.swapsTried++;
+    if (S.accept){
+      S.oldPos = M.C[S.j].slice();
+      M.C[S.j] = [D.X[2*S.cand], D.X[2*S.cand+1]];
+      assignAll(); M.converged = false; M.swapsAccepted++;
+      pushHist('swap-accept', 'Swap accepted');
+      setMsg(`Step 4: <b>accepted</b>. Cost <span class="num">${fmt(S.oldCost)} → ${fmt(M.cost)}</span> (${fmtPct((M.cost/S.oldCost-1)*100)}). The removed center's points went to their next-nearest center or the candidate.${S.willPolish ? ' Next: polish with Lloyd.' : ''}`);
+    } else {
+      pushHist('swap-reject', 'Swap rejected');
+      setMsg(`Step 4: <b>rejected</b>. This swap would raise the cost to <span class="num">${fmt(S.newCost)}</span> (${fmtPct((S.newCost/S.oldCost-1)*100)}), so the centers stay as they are.`);
+    }
+    S.stage = 4;
+    return;
+  }
+  if (S.stage === 4 && S.willPolish){
+    const before = M.cost, it = polish(true);
+    S.stage = 5;
+    setMsg(`Polished with <b>${it}</b> Lloyd iteration${it === 1 ? '' : 's'}: cost <span class="num">${fmt(before)} → ${fmt(M.cost)}</span> (${ratioHTML()}). Lloyd never raises the cost, so polishing keeps the swap guarantees.`);
+  }
+}
+
+function fastSwap(){
+  const p = swapProbs(), c = sampleIdx(p), costs = removalCosts(c);
+  const j = P.removal === 'best' ? argmin(costs) : Math.floor(algoRand() * M.C.length);
+  M.swapsTried++;
+  if (costs[j] < M.cost * (1 - 1e-12)){
+    M.C[j] = [D.X[2*c], D.X[2*c+1]]; assignAll(); M.converged = false; M.swapsAccepted++;
+    pushHist('swap-accept', 'Swap accepted');
+    polish(false);
+    return true;
+  }
+  pushHist('swap-reject', 'Swap rejected');
+  return false;
+}
+
+/* ---------- Formatting ---------- */
+function fmt(v){ if (!isFinite(v)) return '—'; const a = Math.abs(v); if (a >= 1000) return v.toFixed(0); if (a >= 100) return v.toFixed(1); if (a >= 10) return v.toFixed(2); return v.toPrecision(3); }
+function fmtPct(p){ const s = Math.abs(p) < 0.05 ? '±0.0' : (p > 0 ? '+' : '−') + Math.abs(p).toFixed(Math.abs(p) >= 10 ? 0 : 1); return s + '%'; }
+function fmtTick(v){ if (v >= 1e4) return (v/1000).toFixed(0)+'k'; if (v >= 1000) return (v/1000).toFixed(1).replace(/\.0$/,'')+'k'; if (v >= 1) return String(+v.toPrecision(3)); return String(+v.toPrecision(2)); }
+function setMsg(html){ M.msg = html; }
+
+/* ---------- Theme ---------- */
+let T = {}, COL = [], COLRGB = [], isDark = false;
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+function hexToRgb(h){ h = h.replace('#',''); if (h.length === 3) h = h.split('').map(c => c+c).join(''); const n = parseInt(h, 16); return { r:(n>>16)&255, g:(n>>8)&255, b:n&255 }; }
+function hslToHex(h, s, l){ s/=100; l/=100; const k = n => (n + h/30) % 12, a = s*Math.min(l, 1-l); const f = n => l - a*Math.max(-1, Math.min(k(n)-3, Math.min(9-k(n), 1))); const to = x => Math.round(x*255).toString(16).padStart(2,'0'); return '#'+to(f(0))+to(f(8))+to(f(4)); }
+function readTheme(){
+  T = { bg:css('--plot'), panel:css('--panel'), ink:css('--ink'), ink2:css('--ink-2'), muted:css('--muted'), line:css('--line'), accent:css('--accent'), hl:css('--hl'), rm:css('--rm') };
+  const bg = hexToRgb(T.bg); isDark = (0.299*bg.r + 0.587*bg.g + 0.114*bg.b) < 128;
+  COL = [];
+  for (let j = 0; j < 30; j++) COL.push(j < 8 ? css('--c'+(j+1)) : hslToHex((j*137.508 + 25) % 360, 58, isDark ? 62 : 44));
+  COLRGB = COL.map(hexToRgb);
+  vorKey = '';
+}
+
+/* ---------- Plot drawing ---------- */
+const plot = $('plot'), pctx = plot.getContext('2d');
+let PW = 600, PH = 600, dpr = 1;
+const vorCanvas = document.createElement('canvas'); let vorKey = '';
+
+function sizePlot(){
+  const w = $('plotWrap').clientWidth;
+  const h = Math.round(Math.min(w, Math.max(340, window.innerHeight - 190)));
+  const nd = window.devicePixelRatio || 1;
+  if (w === PW && h === PH && nd === dpr && plot.width) return;
+  PW = w; PH = h; dpr = nd;
+  plot.width = Math.round(w*dpr); plot.height = Math.round(h*dpr); plot.style.height = h + 'px';
+  vorKey = ''; draw();
+}
+
+function view(){
+  const pad = 14, xr = D.bx1-D.bx0, yr = D.by1-D.by0;
+  const s = Math.min((PW-2*pad)/xr, (PH-2*pad)/yr), ox = (PW - s*xr)/2, oy = (PH - s*yr)/2;
+  return { s, sx:x => ox + (x-D.bx0)*s, sy:y => PH - oy - (y-D.by0)*s, ix:px => D.bx0 + (px-ox)/s, iy:py => D.by0 + (PH-oy-py)/s };
+}
+
+function rr(ctx, x, y, w, h, r){ ctx.beginPath(); ctx.moveTo(x+r, y); ctx.arcTo(x+w, y, x+w, y+h, r); ctx.arcTo(x+w, y+h, x, y+h, r); ctx.arcTo(x, y+h, x, y, r); ctx.arcTo(x, y, x+w, y, r); ctx.closePath(); }
+function star(ctx, x, y, R, r){ ctx.beginPath(); for (let i = 0; i < 10; i++){ const a = -Math.PI/2 + i*Math.PI/5, d = i % 2 ? r : R; ctx.lineTo(x + d*Math.cos(a), y + d*Math.sin(a)); } ctx.closePath(); }
+function tag(ctx, text, x, y, color, bold){
+  ctx.font = (bold ? '600 ' : '500 ') + '11px "IBM Plex Mono", ui-monospace, monospace';
+  const w = ctx.measureText(text).width + 10, h = 17;
+  let lx = x + 12, ly = y - h - 6;
+  if (lx + w > PW - 4) lx = x - 12 - w;
+  ly = clamp(ly, 3, PH - h - 3);
+  ctx.globalAlpha = 0.94; ctx.fillStyle = T.panel; rr(ctx, lx, ly, w, h, 4); ctx.fill();
+  ctx.globalAlpha = 1; ctx.strokeStyle = color; ctx.lineWidth = bold ? 1.5 : 1; ctx.stroke();
+  ctx.fillStyle = color; ctx.textBaseline = 'middle'; ctx.fillText(text, lx + 5, ly + h/2 + 0.5);
+}
+function arrow(ctx, x0, y0, x1, y1){
+  const dx = x1-x0, dy = y1-y0, L = Math.hypot(dx, dy); if (L < 22) return;
+  const ux = dx/L, uy = dy/L, sx = x0 + ux*9, sy = y0 + uy*9, tx = x1 - ux*10, ty = y1 - uy*10;
+  ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(tx - ux*6, ty - uy*6); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(tx - ux*8 + uy*4.5, ty - uy*8 - ux*4.5); ctx.lineTo(tx - ux*8 - uy*4.5, ty - uy*8 + ux*4.5); ctx.closePath(); ctx.fill();
+}
+
+function drawVoronoi(ctx, V){
+  const step = 3, gw = Math.ceil(PW/step), gh = Math.ceil(PH/step), C = M.C, k = C.length;
+  const key = C.map(c => c[0].toFixed(5)+','+c[1].toFixed(5)).join(';') + '|' + gw + 'x' + gh + '|' + T.bg + COL[0] + '|' + D.bx0.toFixed(5) + D.by0.toFixed(5);
+  if (key !== vorKey){
+    vorCanvas.width = gw; vorCanvas.height = gh;
+    const vctx = vorCanvas.getContext('2d'), img = vctx.createImageData(gw, gh), data = img.data;
+    const bg = hexToRgb(T.bg), a = isDark ? 0.17 : 0.12;
+    for (let gy = 0; gy < gh; gy++){
+      const y = V.iy((gy + 0.5)*step);
+      for (let gx = 0; gx < gw; gx++){
+        const x = V.ix((gx + 0.5)*step);
+        let best = 0, bd = Infinity;
+        for (let j = 0; j < k; j++){ const dx = x-C[j][0], dy = y-C[j][1], d = dx*dx+dy*dy; if (d < bd){ bd = d; best = j; } }
+        const c = COLRGB[best], o = 4*(gy*gw + gx);
+        data[o] = bg.r*(1-a) + c.r*a; data[o+1] = bg.g*(1-a) + c.g*a; data[o+2] = bg.b*(1-a) + c.b*a; data[o+3] = 255;
+      }
+    }
+    vctx.putImageData(img, 0, 0); vorKey = key;
+  }
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(vorCanvas, 0, 0, gw*step, gh*step);
+}
+
+/* True-cluster colors: matched to the learned centers by maximum-overlap assignment (Hungarian algorithm). */
+let trueMap = null, offKey = null;
+const truthShown = () => P.colorBy === 'truth' || P.ellipses;
+const centersKey = () => (D.isNested ? 'n:' : 'o:') + M.C.map(c => c[0].toFixed(6) + ',' + c[1].toFixed(6)).join(';');
+const trueColor = L => COL[(trueMap && L < trueMap.length ? trueMap[L] : L) % COL.length];
+
+// Max-weight perfect matching on an n×n matrix (O(n³); n ≤ 30 here). Returns row → column.
+function hungarianMax(W, n){
+  const INF = 1e300, u = new Float64Array(n+1), v = new Float64Array(n+1), p = new Int32Array(n+1), way = new Int32Array(n+1);
+  for (let i = 1; i <= n; i++){
+    p[0] = i; let j0 = 0;
+    const minv = new Float64Array(n+1).fill(INF), used = new Uint8Array(n+1);
+    do {
+      used[j0] = 1; const i0 = p[j0]; let delta = INF, j1 = 0;
+      for (let j = 1; j <= n; j++) if (!used[j]){
+        const cur = -W[i0-1][j-1] - u[i0] - v[j];
+        if (cur < minv[j]){ minv[j] = cur; way[j] = j0; }
+        if (minv[j] < delta){ delta = minv[j]; j1 = j; }
+      }
+      for (let j = 0; j <= n; j++){ if (used[j]){ u[p[j]] += delta; v[j] -= delta; } else minv[j] -= delta; }
+      j0 = j1;
+    } while (p[j0] !== 0);
+    do { const j1 = way[j0]; p[j0] = p[j1]; j0 = j1; } while (j0);
+  }
+  const match = new Int32Array(n); for (let j = 1; j <= n; j++) if (p[j]) match[p[j]-1] = j-1;
+  return match;
+}
+function computeTrueMap(){
+  const K = P.K, k = M.C.length;
+  trueMap = new Int32Array(K);
+  if (!k){ for (let L = 0; L < K; L++) trueMap[L] = L; return; }
+  const n = Math.max(K, k), W = Array.from({ length:n }, () => new Float64Array(n));
+  for (let i = 0; i < D.N; i++){ const j = M.assign[i]; if (j >= 0) W[D.label[i]][j] += D.w[i]; }
+  const match = hungarianMax(W, n);
+  let next = k;                                  // true clusters left unmatched get colors no center uses
+  for (let L = 0; L < K; L++){ const j = match[L]; trueMap[L] = j < k ? j : next++; }
+}
+// Recolor only when a true-cluster display is switched on, and only if it's the first time
+// or the centers have changed since a true-cluster display was last switched off.
+function setTruthDisplay(change){
+  const before = truthShown(); change(); const after = truthShown();
+  if (!before && after){ if (!trueMap || centersKey() !== offKey) computeTrueMap(); }
+  else if (before && !after) offKey = centersKey();
+}
+
+function pointColor(i){
+  if (P.colorBy === 'truth') return trueColor(D.label[i]);
+  const j = M.assign[i]; return j >= 0 ? COL[j] : T.ink2;
+}
+
+function draw(){
+  if (!M) return;
+  const ctx = pctx; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.globalAlpha = 1; ctx.fillStyle = T.bg; ctx.fillRect(0, 0, PW, PH);
+  const V = view(), X = D.X, N = D.N, C = M.C, S = M.swap;
+  if (P.voronoi && C.length) drawVoronoi(ctx, V);
+
+  if (P.ellipses){
+    ctx.save(); ctx.setLineDash([5, 3]); ctx.lineWidth = 1.5; ctx.globalAlpha = 0.9;
+    for (let L = 0; L < D.clusters.length; L++){
+      const c = D.clusters[L]; ctx.strokeStyle = trueColor(L);
+      ctx.beginPath(); ctx.ellipse(V.sx(c.mx), V.sy(c.my), Math.max(1, 2*c.s1*V.s), Math.max(1, 2*c.s2*V.s), -c.th, 0, 2*Math.PI); ctx.stroke();
+      ctx.beginPath(); const x = V.sx(c.mx), y = V.sy(c.my); ctx.moveTo(x-4, y); ctx.lineTo(x+4, y); ctx.moveTo(x, y-4); ctx.lineTo(x, y+4); ctx.setLineDash([]); ctx.stroke(); ctx.setLineDash([4, 3]);
+    }
+    ctx.restore();
+  }
+
+  if (D.isNested && P.showOrig){
+    const OX = Douter.X; ctx.fillStyle = T.muted; ctx.globalAlpha = 0.35;
+    for (let i = 0; i < Douter.N; i++){ ctx.beginPath(); ctx.arc(V.sx(OX[2*i]), V.sy(OX[2*i+1]), 1.3, 0, 2*Math.PI); ctx.fill(); }
+    ctx.globalAlpha = 1;
+  }
+
+  // Probabilities are shown only once there is something to compare against (not for the very first, uniform pick).
+  const probs = (M.phase === 'seeding' && C.length) ? M.probs : (S && S.stage <= 2 ? S.probs : null);
+  const R0 = D.isNested ? 7 : N <= 400 ? 2.7 : N <= 1000 ? 2.3 : 1.9;
+  const meanW = D.wsum / N;
+  if (probs){
+    ctx.fillStyle = T.muted; ctx.globalAlpha = 0.5;
+    for (let i = 0; i < N; i++){ ctx.beginPath(); ctx.arc(V.sx(X[2*i]), V.sy(X[2*i+1]), D.isNested ? 2 : 1.1, 0, 2*Math.PI); ctx.fill(); }
+    const order = []; for (let i = 0; i < N; i++) if (probs[i] > 0) order.push(i);
+    order.sort((a, b) => probs[b] - probs[a]);
+    ctx.lineWidth = 0.8;
+    for (const i of order){
+      const r = Math.min(30, R0 * Math.sqrt(probs[i] * N));
+      if (r < 0.35) continue;
+      const col = pointColor(i), x = V.sx(X[2*i]), y = V.sy(X[2*i+1]);
+      ctx.beginPath(); ctx.arc(x, y, r, 0, 2*Math.PI);
+      ctx.globalAlpha = 0.42; ctx.fillStyle = col; ctx.fill();
+      ctx.globalAlpha = 0.9; ctx.strokeStyle = col; ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  } else if (D.isNested){
+    // Weighted points: area ∝ weight.
+    const order = Array.from({ length:N }, (_, i) => i).sort((a, b) => D.w[b] - D.w[a]);
+    ctx.lineWidth = 1;
+    for (const i of order){
+      const r = clamp(R0 * Math.sqrt(D.w[i] / meanW), 2, 24), col = pointColor(i);
+      ctx.beginPath(); ctx.arc(V.sx(X[2*i]), V.sy(X[2*i+1]), r, 0, 2*Math.PI);
+      ctx.globalAlpha = 0.55; ctx.fillStyle = col; ctx.fill();
+      ctx.globalAlpha = 1; ctx.strokeStyle = col; ctx.stroke();
+    }
+  } else {
+    ctx.globalAlpha = 0.82;
+    for (let i = 0; i < N; i++){ ctx.fillStyle = pointColor(i); ctx.beginPath(); ctx.arc(V.sx(X[2*i]), V.sy(X[2*i+1]), R0, 0, 2*Math.PI); ctx.fill(); }
+    ctx.globalAlpha = 1;
+  }
+
+  if (P.fitEllipses && C.length){
+    // Weighted second moment of each cluster about its center; 2σ ellipse from its eigen-decomposition.
+    const k = C.length, sxx = new Float64Array(k), syy = new Float64Array(k), sxy = new Float64Array(k), n = new Float64Array(k), cnt = new Float64Array(k);
+    for (let i = 0; i < N; i++){
+      const j = M.assign[i]; if (j < 0) continue;
+      const dx = X[2*i] - C[j][0], dy = X[2*i+1] - C[j][1], wi = D.w[i];
+      sxx[j] += wi*dx*dx; syy[j] += wi*dy*dy; sxy[j] += wi*dx*dy; n[j] += wi; cnt[j]++;
+    }
+    ctx.save(); ctx.lineWidth = 1.8;
+    for (let j = 0; j < k; j++){
+      if (cnt[j] < 2 || !(n[j] > 0)) continue;
+      const a = sxx[j]/n[j], d = syy[j]/n[j], b = sxy[j]/n[j];
+      const m = (a+d)/2, q = Math.sqrt(((a-d)/2)**2 + b*b), l1 = m + q, l2 = Math.max(0, m - q);
+      const th = 0.5 * Math.atan2(2*b, a - d);
+      ctx.beginPath();
+      ctx.ellipse(V.sx(C[j][0]), V.sy(C[j][1]), Math.max(1, 2*Math.sqrt(l1)*V.s), Math.max(1, 2*Math.sqrt(l2)*V.s), -th, 0, 2*Math.PI);
+      ctx.globalAlpha = 0.9; ctx.strokeStyle = T.bg; ctx.lineWidth = 3.4; ctx.stroke();
+      ctx.strokeStyle = COL[j]; ctx.lineWidth = 1.8; ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  if (M.trails && (!S || S.stage >= 5)){
+    ctx.strokeStyle = T.ink; ctx.lineWidth = 1.4; ctx.globalAlpha = 0.75;
+    for (const [o, n] of M.trails){
+      const x0 = V.sx(o[0]), y0 = V.sy(o[1]), x1 = V.sx(n[0]), y1 = V.sy(n[1]);
+      if (Math.hypot(x1-x0, y1-y0) < 1) continue;
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+      ctx.beginPath(); ctx.arc(x0, y0, 2.6, 0, 2*Math.PI); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  if (S && S.stage >= 4 && S.accept && S.oldPos){
+    const ox = V.sx(S.oldPos[0]), oy = V.sy(S.oldPos[1]), nx = V.sx(D.X[2*S.cand]), ny = V.sy(D.X[2*S.cand+1]);
+    ctx.save(); ctx.strokeStyle = T.rm; ctx.lineWidth = 1.6; ctx.setLineDash([3, 2.5]);
+    ctx.beginPath(); ctx.arc(ox, oy, 7, 0, 2*Math.PI); ctx.stroke(); ctx.setLineDash([]);
+    ctx.beginPath(); ctx.moveTo(ox-4, oy-4); ctx.lineTo(ox+4, oy+4); ctx.moveTo(ox+4, oy-4); ctx.lineTo(ox-4, oy+4); ctx.stroke();
+    if (S.stage === 4){ ctx.strokeStyle = T.ink; ctx.fillStyle = T.ink; ctx.lineWidth = 1.5; ctx.globalAlpha = 0.85; arrow(ctx, ox, oy, nx, ny); }
+    ctx.restore();
+  }
+
+  for (let j = 0; j < C.length; j++){
+    const x = V.sx(C[j][0]), y = V.sy(C[j][1]);
+    ctx.beginPath(); ctx.arc(x, y, 8.6, 0, 2*Math.PI); ctx.fillStyle = T.bg; ctx.fill();
+    ctx.beginPath(); ctx.arc(x, y, 6.6, 0, 2*Math.PI); ctx.fillStyle = COL[j]; ctx.fill();
+    ctx.lineWidth = 1.3; ctx.strokeStyle = T.ink; ctx.stroke();
+  }
+
+  if (M.lastPick >= 0 && !S){
+    const x = V.sx(X[2*M.lastPick]), y = V.sy(X[2*M.lastPick+1]);
+    ctx.beginPath(); ctx.arc(x, y, 13, 0, 2*Math.PI); ctx.strokeStyle = T.accent; ctx.lineWidth = 2.2; ctx.stroke();
+  }
+
+  if (S && S.stage >= 2){
+    const cx = V.sx(X[2*S.cand]), cy = V.sy(X[2*S.cand+1]);
+    if (S.stage === 3){
+      const k = C.length, show = new Set([S.j, S.best]);
+      if (k <= 12) for (let j = 0; j < k; j++) show.add(j);
+      for (const j of show){
+        const x = V.sx(C[j][0]), y = V.sy(C[j][1]);
+        const pct = (S.costs[j]/S.oldCost - 1)*100;
+        tag(ctx, fmtPct(pct), x, y, j === S.j ? T.rm : T.ink2, j === S.j || j === S.best);
+      }
+      const x = V.sx(C[S.j][0]), y = V.sy(C[S.j][1]);
+      ctx.save(); ctx.strokeStyle = T.rm; ctx.lineWidth = 2.2; ctx.setLineDash([4, 3]);
+      ctx.beginPath(); ctx.arc(x, y, 13, 0, 2*Math.PI); ctx.stroke(); ctx.restore();
+    }
+    if (S.stage <= 3 || (S.stage === 4 && !S.accept)){
+      star(ctx, cx, cy, 11, 4.8);
+      ctx.fillStyle = (S.stage === 4) ? T.muted : T.hl; ctx.fill();
+      ctx.lineWidth = 1.3; ctx.strokeStyle = T.ink; ctx.stroke();
+      if (S.stage === 4) tag(ctx, 'rejected', cx, cy, T.ink2, false);
+    } else if (S.stage === 4 && S.accept){
+      star(ctx, cx, cy, 5, 2.2); ctx.fillStyle = T.hl; ctx.fill();
+      tag(ctx, 'swapped in', V.sx(C[S.j][0]), V.sy(C[S.j][1]), T.ink, true);
+    }
+  }
+
+  if (D.isNested){
+    const txt = `Nested mode · ${N} former centers as ${P.weighted ? 'weighted ' : ''}points`;
+    ctx.font = '600 12px "IBM Plex Sans", system-ui, sans-serif';
+    const w = ctx.measureText(txt).width + 16;
+    ctx.globalAlpha = 0.94; ctx.fillStyle = T.panel; rr(ctx, 10, 10, w, 24, 5); ctx.fill(); ctx.globalAlpha = 1;
+    ctx.strokeStyle = T.accent; ctx.lineWidth = 1.2; ctx.stroke();
+    ctx.fillStyle = T.accent; ctx.textBaseline = 'middle'; ctx.fillText(txt, 18, 22.5);
+  }
+}
+
+/* ---------- Cost chart ---------- */
+const cc = $('costChart'), cctx = cc.getContext('2d');
+let CW = 280, CH = 200, hoverIdx = -1;
+const CPAD = { l:46, r:12, t:12, b:24 };
+function sizeChart(){
+  const w = $('chartWrap').clientWidth; if (!w) return;
+  CW = w; CH = 200;
+  cc.width = Math.round(CW*dpr); cc.height = Math.round(CH*dpr); cc.style.height = CH + 'px';
+  drawChart();
+}
+function chartScale(){
+  const H = M.history, vals = [];
+  for (const h of H){ if (isFinite(h.cost) && h.cost > 0) vals.push(h.cost); if (D.isNested && isFinite(h.orig) && h.orig > 0) vals.push(h.orig); }
+  if (isFinite(D.truthCost)) vals.push(D.truthCost);
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  let a = Math.log10(lo), b = Math.log10(hi);
+  if (b - a < 0.25){ const m = (a+b)/2; a = m - 0.125; b = m + 0.125; }
+  const pa = (b-a)*0.06; a -= pa; b += pa;
+  const w = CW - CPAD.l - CPAD.r, h = CH - CPAD.t - CPAD.b, n = H.length;
+  return { a, b, n, x:i => CPAD.l + (n <= 1 ? w/2 : i/(n-1)*w), y:v => CPAD.t + (b - Math.log10(v))/(b-a)*h, w, h };
+}
+function drawChart(){
+  if (!M) return;
+  const ctx = cctx; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, CW, CH);
+  const H = M.history;
+  ctx.font = '10.5px "IBM Plex Mono", ui-monospace, monospace';
+  if (!H.length){
+    ctx.fillStyle = T.muted; ctx.textBaseline = 'middle'; ctx.textAlign = 'center';
+    ctx.fillText('Add a center to start the history', CW/2, CH/2); ctx.textAlign = 'left'; return;
+  }
+  const s = chartScale();
+  // ticks
+  const span = s.b - s.a, mult = span > 2 ? [1] : span > 0.8 ? [1, 2, 5] : [1, 1.5, 2, 3, 5, 7];
+  const ticks = [];
+  for (let d = Math.floor(s.a) - 1; d <= Math.ceil(s.b); d++) for (const m of mult){ const v = m*Math.pow(10, d), L = Math.log10(v); if (L >= s.a && L <= s.b) ticks.push(v); }
+  let tk = ticks; if (tk.length > 6){ const st = Math.ceil(tk.length/6); tk = tk.filter((_, i) => i % st === 0); }
+  ctx.strokeStyle = T.line; ctx.lineWidth = 1; ctx.fillStyle = T.muted; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  for (const v of tk){ const y = Math.round(s.y(v)) + 0.5; ctx.beginPath(); ctx.moveTo(CPAD.l, y); ctx.lineTo(CW - CPAD.r, y); ctx.stroke(); ctx.fillText(fmtTick(v), CPAD.l - 6, y); }
+  // x labels
+  ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText('step 1', CPAD.l, CH - CPAD.b + 7);
+  ctx.textAlign = 'right'; ctx.fillText(String(H.length), CW - CPAD.r, CH - CPAD.b + 7);
+  // truth
+  if (isFinite(D.truthCost)){
+    const y = s.y(D.truthCost);
+    ctx.save(); ctx.setLineDash([4, 3]); ctx.strokeStyle = T.ink2; ctx.lineWidth = 1.3;
+    ctx.beginPath(); ctx.moveTo(CPAD.l, y); ctx.lineTo(CW - CPAD.r, y); ctx.stroke(); ctx.restore();
+    ctx.fillStyle = T.ink2; ctx.textAlign = 'left'; ctx.textBaseline = 'bottom'; ctx.fillText('truth', CPAD.l + 4, y - 2);
+  }
+  // original-data cost (nested mode only)
+  if (D.isNested){
+    ctx.strokeStyle = COL[6]; ctx.lineWidth = 1.6; ctx.lineJoin = 'round'; ctx.beginPath(); let st = false;
+    for (let i = 0; i < H.length; i++){ const v = H[i].orig; if (!isFinite(v) || v <= 0) continue; const x = s.x(i), y = s.y(v); if (!st){ ctx.moveTo(x, y); st = true; } else ctx.lineTo(x, y); }
+    ctx.stroke();
+  }
+  // line
+  ctx.strokeStyle = T.ink2; ctx.lineWidth = 1.6; ctx.lineJoin = 'round'; ctx.beginPath();
+  let started = false;
+  for (let i = 0; i < H.length; i++){ const v = H[i].cost; if (!isFinite(v) || v <= 0) continue; const x = s.x(i), y = s.y(v); if (!started){ ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y); }
+  ctx.stroke();
+  // markers
+  const dense = H.length > 300;
+  const colorOf = k => k === 'seed' ? COL[0] : k === 'lloyd' ? COL[1] : k === 'recluster' ? COL[3] : COL[2];
+  for (let i = 0; i < H.length; i++){
+    const h = H[i]; if (!isFinite(h.cost) || h.cost <= 0) continue;
+    if (dense && h.kind !== 'swap-accept' && h.kind !== 'recluster') continue;
+    const x = s.x(i), y = s.y(h.cost);
+    if (h.kind === 'swap-reject'){ ctx.beginPath(); ctx.arc(x, y, 2.6, 0, 2*Math.PI); ctx.strokeStyle = T.muted; ctx.lineWidth = 1.2; ctx.stroke(); continue; }
+    const r = h.kind === 'swap-accept' ? 4.2 : h.kind === 'recluster' ? 5 : 3.4;
+    ctx.beginPath(); ctx.arc(x, y, r + 1.4, 0, 2*Math.PI); ctx.fillStyle = T.panel; ctx.fill();
+    ctx.beginPath(); ctx.arc(x, y, r, 0, 2*Math.PI); ctx.fillStyle = colorOf(h.kind); ctx.fill();
+  }
+  // hover
+  if (hoverIdx >= 0 && hoverIdx < H.length && isFinite(H[hoverIdx].cost)){
+    const x = s.x(hoverIdx), y = s.y(H[hoverIdx].cost);
+    ctx.strokeStyle = T.ink2; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x, CPAD.t); ctx.lineTo(x, CH - CPAD.b); ctx.stroke();
+    ctx.beginPath(); ctx.arc(x, y, 5.5, 0, 2*Math.PI); ctx.strokeStyle = T.ink; ctx.lineWidth = 1.6; ctx.stroke();
+  }
+}
+cc.addEventListener('mousemove', e => {
+  const H = M.history; if (!H.length) return;
+  const rect = cc.getBoundingClientRect(), mx = e.clientX - rect.left, s = chartScale();
+  const i = H.length <= 1 ? 0 : clamp(Math.round((mx - CPAD.l)/s.w*(H.length-1)), 0, H.length-1);
+  if (!isFinite(H[i].cost)){ hoverIdx = -1; $('tip').style.display = 'none'; drawChart(); return; }
+  hoverIdx = i; drawChart();
+  const tip = $('tip');
+  tip.innerHTML = `<b>Step ${i+1}</b> · ${H[i].label}<br>cost <span class="num">${fmt(H[i].cost)}</span> · <span class="num">${(H[i].orig/D.truthCost).toFixed(2)}×</span> truth${D.isNested ? `<br>on original data <span class="num">${fmt(H[i].orig)}</span>` : ''}`;
+  tip.style.display = 'block';
+  const tw = tip.offsetWidth, x = s.x(i);
+  tip.style.left = clamp(x - tw/2, 0, CW - tw) + 'px';
+  tip.style.top = Math.max(0, s.y(H[i].cost) - 52) + 'px';
+});
+cc.addEventListener('mouseleave', () => { hoverIdx = -1; $('tip').style.display = 'none'; drawChart(); });
+
+/* ---------- Jobs (animations) ---------- */
+let job = null;
+function stopJob(){ if (job){ job.cancel(); job = null; } }
+
+function playLloyd(){
+  if (job && job.type === 'play'){ stopJob(); render(); return; }
+  stopJob();
+  const j = { type:'play', t:0, cancel(){ clearTimeout(this.t); } }; job = j;
+  const tick = () => {
+    if (job !== j) return;
+    if (M.converged || M.phase !== 'ready'){ job = null; render(); return; }
+    lloydStep(); render();
+    j.t = setTimeout(tick, 1000 / (P.speed * 1.5));
+  };
+  tick();
+}
+
+function animateSwap(){
+  if (job && job.type === 'swap1'){ stopJob(); render(); return; }
+  stopJob();
+  const j = { type:'swap1', t:0, cancel(){ clearTimeout(this.t); } }; job = j;
+  if (isTerminal(M.swap)) M.swap = null;
+  const tick = () => {
+    if (job !== j) return;
+    swapStage(); render();
+    if (!M.swap || isTerminal(M.swap)){ job = null; render(); return; }
+    j.t = setTimeout(tick, 2600 / P.speed);
+  };
+  tick();
+}
+
+function runSwaps(){
+  if (job && job.type === 'batch'){ stopJob(); render(); return; }
+  stopJob();
+  const n = clamp(parseInt($('swapN').value, 10) || 1, 1, 10000);
+  $('swapN').value = n;
+  M.swap = null; M.trails = null; M.lastPick = -1;
+  const startCost = M.cost, acc0 = M.swapsAccepted; let done = 0;
+  const j = { type:'batch', raf:0, cancel(){ cancelAnimationFrame(this.raf); } }; job = j;
+  const report = (fin) => setMsg(`${fin ? 'Ran' : 'Running'} <b>${done}</b>${fin ? '' : ` of ${n}`} swaps (${P.candidate === 'd2' ? 'D²' : 'uniform'} candidates, ${P.removal} removal): <b>${M.swapsAccepted - acc0}</b> accepted. Cost <span class="num">${fmt(startCost)} → ${fmt(M.cost)}</span> (${ratioHTML()}).`);
+  const frame = () => {
+    if (job !== j) return;
+    const t0 = performance.now();
+    while (done < n && performance.now() - t0 < 14){ fastSwap(); done++; }
+    if (done >= n){ job = null; report(true); render(); return; }
+    report(false); render();
+    j.raf = requestAnimationFrame(frame);
+  };
+  frame();
+}
+
+/* ---------- Nested mode: recluster the centers ---------- */
+function buildNested(){
+  const O = Douter, Mo = Mouter, k = Mo.C.length;
+  const cnt = new Float64Array(k), votes = Array.from({ length:k }, () => new Map());
+  for (let i = 0; i < O.N; i++){ const j = Mo.assign[i]; if (j < 0) continue; cnt[j]++; const L = O.label[i]; votes[j].set(L, (votes[j].get(L) || 0) + 1); }
+  const idx = []; for (let j = 0; j < k; j++) if (cnt[j] > 0) idx.push(j);
+  const n = idx.length, X = new Float64Array(2*n), w = new Float64Array(n), label = new Int32Array(n);
+  idx.forEach((j, t) => {
+    X[2*t] = Mo.C[j][0]; X[2*t+1] = Mo.C[j][1]; w[t] = P.weighted ? cnt[j] : 1;
+    let best = 0, bc = -1; for (const [L, c] of votes[j]) if (c > bc){ bc = c; best = L; } label[t] = best;
+  });
+  let wsum = 0; for (let t = 0; t < n; t++) wsum += w[t];
+  return { X, w, wsum, N:n, label, clusters:O.clusters, truthCost:O.truthCost, aspect:O.aspect, sigRatio:O.sigRatio,
+    bx0:O.bx0, bx1:O.bx1, by0:O.by0, by1:O.by1, isNested:true };
+}
+function syncKSlider(){ const s = $('k'); s.max = D.isNested ? Math.min(30, D.N) : 30; s.value = kOf(); }
+function enterNested(){
+  if (D.isNested || M.phase !== 'ready' || M.C.length < 2) return;
+  stopJob(); M.swap = null; M.trails = null; M.lastPick = -1;
+  Mouter = M; P.kOffsetN = 0; D = buildNested();
+  syncKSlider(); resetModel(); render();
+}
+function exitNested(){
+  if (!D.isNested) return;
+  stopJob();
+  const Mn = M, keep = Mn.phase === 'ready';
+  D = Douter; M = Mouter; Mouter = null;
+  const before = M.cost, kBefore = M.C.length;
+  if (keep){
+    M.C = Mn.C.map(c => c.slice()); M.k = M.C.length; P.kOffset = M.k - P.K;
+    M.swap = null; M.trails = null; M.lastPick = -1; M.converged = false; M.phase = 'ready';
+    assignAll(); pushHist('recluster', `Reclustered ${kBefore} → ${M.k} centers`);
+    setMsg(`Back on the original data with <b>${M.k}</b> reclustered centers (from ${kBefore}). Cost <span class="num">${fmt(before)} → ${fmt(M.cost)}</span> (${ratioHTML()}). Fewer centers always cost more than the oversampled set; the comparison that matters is against the ground-truth line. Lloyd and swaps now polish on the full data.`);
+  } else {
+    setMsg(`Left nested mode before seeding finished, so the original ${kBefore} centers are unchanged.`);
+  }
+  syncKSlider(); render();
+}
+
+/* ---------- UI ---------- */
+function updateUI(){
+  $('K_o').textContent = P.K;
+  $('N_o').textContent = P.N;
+  $('scale_o').textContent = 'σ ≈ ' + scaleOf(P.scaleV).toFixed(3);
+  $('elong_o').textContent = 'axes ' + Douter.aspect.toFixed(1) + ' : 1';
+  $('uneven_o').textContent = 'σ range ' + Douter.sigRatio.toFixed(1) + '×';
+  const nested = D.isNested;
+  $('dataSec').classList.toggle('locked', nested);
+  $('dataSec').querySelectorAll('input,button').forEach(el => { el.disabled = nested; });
+  const k = kOf(), off = k - P.K;
+  $('k_o').textContent = k + (off === 0 ? ' (= K)' : off > 0 ? ` (K + ${off})` : ` (K − ${-off})`);
+  $('speed_o').textContent = '×' + P.speed;
+
+  const seeding = M.phase === 'seeding', ready = M.phase === 'ready';
+  const busy = job && job.type === 'batch';
+  $('seedOne').disabled = !seeding || !!job;
+  $('seedAll').disabled = !seeding || !!job;
+  $('lloydStep').disabled = !ready || M.converged || !!job;
+  $('lloydPlay').disabled = !ready || ((M.converged) && !(job && job.type === 'play')) || (job && job.type !== 'play');
+  $('lloydPlay').textContent = job && job.type === 'play' ? 'Pause' : 'Play';
+  $('lloydRun').disabled = !ready || M.converged || !!job;
+  $('swapStage').disabled = !ready || !!job;
+  $('swapOne').disabled = !ready || (job && job.type !== 'swap1');
+  $('swapOne').textContent = job && job.type === 'swap1' ? 'Stop' : 'Animate one swap';
+  $('swapRun').disabled = !ready || (job && job.type !== 'batch');
+  $('swapRun').textContent = busy ? 'Stop' : 'Run';
+  const S = M.swap;
+  let next = P.candidate === 'd2' ? 'Show D² weights' : 'Show weights';
+  if (S && !isTerminal(S)) next = S.stage === 1 ? 'Sample candidate' : S.stage === 2 ? 'Score removals' : S.stage === 3 ? 'Accept or reject' : 'Polish with Lloyd';
+  else if (S && isTerminal(S)) next = 'Next swap: weights';
+  $('swapStage').textContent = next;
+
+  const nb = $('nestBtn');
+  if (nested){
+    nb.textContent = ready ? 'End and use these centers' : 'End reclustering (no change)';
+    nb.disabled = !!busy;
+    $('nestHint').textContent = ready
+      ? `Ending carries these ${M.C.length} centers back to the original data.`
+      : `Ending before seeding finishes keeps the original centers.`;
+  } else {
+    nb.textContent = 'Recluster these centers';
+    const ok = ready && M.C.length >= 2;
+    nb.disabled = !ok || !!job;
+    $('nestHint').textContent = ok ? `The ${M.C.length} current centers become a ${P.weighted ? 'weighted ' : ''}dataset; panels 2–4 then cluster them.` : 'Finish seeding at least 2 centers first.';
+  }
+  $('nestSec').classList.toggle('active', nested);
+  $('colorBy').innerHTML = `Point colors: <b>${P.colorBy === 'truth' ? 'true cluster' : 'nearest center'}</b>`;
+  $('colorBy').setAttribute('aria-pressed', P.colorBy === 'truth' ? 'true' : 'false');
+  $('lgOrig').hidden = !nested;
+
+  let ph;
+  if (busy) ph = 'Swapping…';
+  else if (seeding) ph = `Seeding ${M.C.length}/${M.k}`;
+  else if (S) ph = S.stage <= 4 ? `Swap · step ${S.stage}/4` : 'Swap · polish';
+  else if (M.converged) ph = 'Converged';
+  else if (M.lloydIters > 0) ph = `Lloyd · ${M.lloydIters}`;
+  else ph = 'Seeded';
+  $('phase').textContent = (nested ? 'Nested · ' : '') + ph;
+  $('msg').innerHTML = M.msg;
+
+  const has = isFinite(M.cost);
+  $('st_cost_k').textContent = nested ? 'Cost on centers' : 'Cost (SSE)';
+  $('st_cost').textContent = has ? fmt(M.cost) : '—';
+  $('st_cost_s').textContent = `${M.C.length} of ${M.k} centers` + (nested && P.weighted ? ', weighted' : '');
+  $('st_ratio').textContent = has ? (M.origCost / Douter.truthCost).toFixed(2) + '×' : '—';
+  $('st_ratio_s').textContent = nested ? `original data ${has ? fmt(M.origCost) : '—'}` : `truth ${fmt(Douter.truthCost)}, K = ${P.K}`;
+  $('st_lloyd').textContent = M.lloydIters;
+  $('st_lloyd_s').textContent = M.converged ? 'converged' : ready ? 'not converged' : 'after seeding';
+  $('st_swaps').textContent = M.swapsAccepted;
+  $('st_swaps_s').textContent = `of ${M.swapsTried} tried`;
+}
+function render(){ draw(); drawChart(); updateUI(); }
+
+function newData(regen){ stopJob(); if (regen) genLatent(); realize(); resetModel(); trueMap = null; offKey = null; if (truthShown()) computeTrueMap(); render(); }
+function bindRange(id, key, fn){ $(id).addEventListener('input', e => { P[key] = +e.target.value; fn(); }); }
+bindRange('K', 'K', () => { $('k').value = kOf(); newData(true); });
+bindRange('N', 'N', () => newData(true));
+bindRange('scale', 'scaleV', () => newData(false));
+bindRange('elong', 'elongV', () => newData(false));
+bindRange('uneven', 'unevenV', () => newData(false));
+$('resample').addEventListener('click', () => { dataSeed = newSeed(); newData(true); });
+$('k').addEventListener('input', e => { if (D.isNested) P.kOffsetN = +e.target.value - P.K; else P.kOffset = +e.target.value - P.K; stopJob(); resetModel(); render(); });
+document.querySelectorAll('input[name=method]').forEach(r => r.addEventListener('change', e => { P.method = e.target.value; stopJob(); resetModel(); render(); }));
+$('seedOne').addEventListener('click', () => { seedStep(); render(); });
+$('seedAll').addEventListener('click', () => { while (M.phase === 'seeding') seedStep(); render(); });
+$('seedReset').addEventListener('click', () => { stopJob(); resetModel(); render(); });
+$('lloydStep').addEventListener('click', () => { lloydStep(); render(); });
+$('lloydPlay').addEventListener('click', playLloyd);
+$('lloydRun').addEventListener('click', () => {
+  let n = 0; while (M.phase === 'ready' && !M.converged && n < 1000){ lloydStep(); n++; }
+  render();
+});
+$('speed').addEventListener('input', e => { P.speed = +e.target.value; updateUI(); });
+$('candidate').addEventListener('change', e => { P.candidate = e.target.value; if (M.swap && M.swap.stage <= 2) M.swap = null; render(); });
+$('removal').addEventListener('change', e => { P.removal = e.target.value; if (M.swap && M.swap.stage <= 3) M.swap = null; render(); });
+$('polish').addEventListener('change', e => { P.polish = e.target.value; render(); });
+$('swapStage').addEventListener('click', () => { swapStage(); render(); });
+$('swapOne').addEventListener('click', animateSwap);
+$('swapRun').addEventListener('click', runSwaps);
+$('swapN').addEventListener('keydown', e => { if (e.key === 'Enter') runSwaps(); });
+$('voronoi').addEventListener('change', e => { P.voronoi = e.target.checked; draw(); });
+$('ellipses').addEventListener('change', e => { setTruthDisplay(() => { P.ellipses = e.target.checked; }); draw(); });
+$('colorBy').addEventListener('click', () => { setTruthDisplay(() => { P.colorBy = P.colorBy === 'truth' ? 'assign' : 'truth'; }); draw(); updateUI(); });
+$('fitEllipses').addEventListener('change', e => { P.fitEllipses = e.target.checked; draw(); });
+$('nestBtn').addEventListener('click', () => { if (D.isNested) exitNested(); else enterNested(); });
+$('weighted').addEventListener('change', e => { P.weighted = e.target.checked; if (D.isNested){ stopJob(); D = buildNested(); syncKSlider(); resetModel(); } render(); });
+$('showOrig').addEventListener('change', e => { P.showOrig = e.target.checked; draw(); });
+
+const ro = new ResizeObserver(() => { sizePlot(); sizeChart(); });
+ro.observe($('plotWrap')); ro.observe($('chartWrap'));
+window.addEventListener('resize', () => sizePlot());
+const retheme = () => { readTheme(); render(); };
+new MutationObserver(retheme).observe(document.documentElement, { attributes:true, attributeFilter:['data-theme', 'class', 'style'] });
+if (window.matchMedia) window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', retheme);
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => render());
+
+/* ---------- Start: the plain dataset, no centers yet ---------- */
+readTheme();
+genLatent(); realize(); resetModel();
+sizePlot(); sizeChart(); render();
+})();
+</script>
+</body>
+</html>
