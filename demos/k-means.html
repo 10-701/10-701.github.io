@@ -9,7 +9,7 @@
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 :root{
-  /* Layout: controls rail | plot with status line | readouts rail. Two columns under 1180px, one under 760px. */
+  /* Layout: sticky plot panel on the right (wide) or pinned at the top (under 900px); controls and readouts scroll. */
   --bg:#f2f2ef;
   --panel:#ffffff;
   --plot:#fcfcfb;
@@ -49,15 +49,31 @@
 *{box-sizing:border-box}
 html,body{margin:0;min-height:100%}
 body{background:var(--bg);color:var(--ink);font:14px/1.45 var(--font-body)}
-header{display:flex;align-items:baseline;gap:6px 18px;flex-wrap:wrap;padding:14px 20px 12px;border-bottom:1px solid var(--line)}
+/* Layout: the plot panel is sticky. Wide: right column, scrolling controls + readouts on the left.
+   Narrow: pinned to the top (about 58% of the viewport), controls scroll beneath it. */
+.intro{display:flex;flex-direction:column;gap:4px;padding:2px 2px 0}
 h1{font-size:18px;margin:0;font-weight:600;letter-spacing:-0.01em;text-wrap:balance}
-header p{margin:0;color:var(--ink-2);font-size:13px;max-width:90ch}
-.app{display:grid;grid-template-columns:282px minmax(0,1fr) 300px;gap:16px;padding:16px 20px 28px;align-items:start}
-@media (max-width:1180px){
-  .app{grid-template-columns:276px minmax(0,1fr)}
-  .readouts{grid-column:1 / -1;display:grid !important;grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.intro p{margin:0;color:var(--ink-2);font-size:13px;max-width:90ch}
+.app{display:grid;gap:16px;padding:16px 20px 28px;align-items:start;
+  grid-template-columns:282px 300px minmax(0,1fr);
+  grid-template-rows:auto 1fr;
+  grid-template-areas:"head head stage" "controls readouts stage"}
+.intro{grid-area:head}
+.controls{grid-area:controls}
+.readouts{grid-area:readouts}
+.stage{grid-area:stage;position:sticky;top:16px;align-self:start;z-index:5}
+@media (max-width:1279px){
+  .app{grid-template-columns:300px minmax(0,1fr);grid-template-rows:auto auto 1fr;
+    grid-template-areas:"head stage" "controls stage" "readouts stage"}
 }
-@media (max-width:760px){.app{grid-template-columns:1fr;padding:12px 16px 24px}}
+@media (max-width:899px){
+  /* Flex, not grid: a sticky grid item only sticks within its own grid area. */
+  .app{display:flex;flex-wrap:wrap;align-items:flex-start;padding:12px 16px 24px}
+  .intro{order:0;flex:1 1 100%}
+  .stage{order:1;flex:1 1 100%;top:0;border-radius:0 0 8px 8px;box-shadow:0 6px 16px rgba(0,0,0,.14)}
+  .controls{order:2;flex:1 1 280px}
+  .readouts{order:3;flex:1 1 280px}
+}
 .panel{background:var(--panel);border:1px solid var(--line);border-radius:8px}
 .controls section{padding:12px 14px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:9px}
 .controls section:last-child{border-bottom:0}
@@ -91,7 +107,8 @@ input[type=number]{width:72px;font-family:var(--font-mono)}
 .stage{overflow:hidden}
 #plotWrap{position:relative;width:100%}
 #plot{display:block;width:100%;background:var(--plot)}
-.status{display:flex;gap:12px;align-items:flex-start;padding:10px 14px 12px;border-top:1px solid var(--line);min-height:70px}
+.status{display:flex;gap:12px;align-items:flex-start;padding:10px 14px 12px;border-top:1px solid var(--line);height:106px;overflow-y:auto}
+@media (max-width:899px){.status{height:90px;padding:8px 12px}#msg{font-size:13px}}
 .pill{font:500 11px var(--font-mono);padding:3px 9px;border-radius:999px;white-space:nowrap;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent);margin-top:1px}
 #msg{margin:0;font-size:13.5px;max-width:78ch}
 #msg b{font-weight:600}
@@ -129,12 +146,12 @@ button.toggle b{font-weight:600;color:var(--accent)}
 </style>
 </head>
 <body>
-<header>
+<main class="app">
+  <div class="intro">
   <h1>k-means seeding, Lloyd, and swap local search</h1>
   <p>Generate 2-D Gaussian clusters, seed centers at random or with k-means++, run Lloyd's algorithm, then improve the result with LocalSearch++ swaps (Lattanzi &amp; Sohler, 2019).</p>
-</header>
+  </div>
 
-<main class="app">
   <!-- Controls -->
   <aside class="controls panel" aria-label="Controls">
     <section id="dataSec" data-lock="Locked while reclustering. To change the data, end nested mode with the button in panel 5.">
@@ -334,12 +351,16 @@ function resetModel(){
   M = { C:[], k:kOf(), method:P.method, assign:new Int32Array(N).fill(-1),
     d1:new Float64Array(N).fill(Infinity), d2:new Float64Array(N).fill(Infinity), cost:Infinity, origCost:Infinity,
     phase:'seeding', probs:null, chosen:new Uint8Array(N), lastPick:-1,
-    lloydIters:0, converged:false, swapsTried:0, swapsAccepted:0, history:[], swap:null, trails:null, msg:'' };
+    lloydIters:0, converged:false, swapsTried:0, swapsAccepted:0, history:[], swap:null, trails:null, msg:'',
+    ccol:[] };   // ccol[j]: palette index of center j (a center keeps its color when others change)
   M.probs = seedProbs();
   const nest = D.isNested
     ? `Nested mode: the ${D.N} points are the previous centers${P.weighted ? ', each with area ∝ its weight (points it served)' : ', all weighted equally'}. `
     : `The plain dataset: ${D.N} points from K = ${P.K} Gaussian clusters. `;
-  setMsg(nest + (M.method === 'kpp'
+  const trivial = D.isNested && M.k >= D.N
+    ? `<b>k = ${M.k} equals the number of points</b>, so every point will get its own center and the cost will be zero. Lower k, or oversample (k &gt; K) on the original data first. `
+    : '';
+  setMsg(nest + trivial + (M.method === 'kpp'
     ? `Next: seed <b>${M.k}</b> centers with <b>k-means++</b>. The first center is drawn ${D.isNested && P.weighted ? '∝ weight' : 'uniformly'}; each later one with probability ∝ ${D.isNested && P.weighted ? 'weight × ' : ''}D², the squared distance to the nearest center already chosen. Point areas will show those probabilities.`
     : `Next: seed <b>${M.k}</b> centers at <b>random points</b>${D.isNested && P.weighted ? ' (drawn ∝ weight)' : ''}. Big clusters tend to collect extra centers, and small ones can get none.`));
 }
@@ -395,8 +416,8 @@ function seedProbs(){
 function seedStep(){
   if (M.phase !== 'seeding') return;
   const i = sampleIdx(M.probs);
-  M.C.push([D.X[2*i], D.X[2*i+1]]); M.chosen[i] = 1; M.lastPick = i;
-  assignAll();
+  M.C.push([D.X[2*i], D.X[2*i+1]]); M.ccol.push(freeColor(new Set(M.ccol))); M.chosen[i] = 1; M.lastPick = i;
+  assignAll(); recolorCenters();
   pushHist('seed', `Seed ${M.C.length}`);
   if (M.C.length >= M.k){
     M.phase = 'ready'; M.probs = null;
@@ -432,7 +453,7 @@ function lloydStep(){
   if (M.phase !== 'ready' || M.converged) return null;
   M.swap = null; M.lastPick = -1;
   const before = M.C.map(c => c.slice());
-  const r = lloydCore();
+  const r = lloydCore(); recolorCenters();
   M.trails = before.map((o, j) => [o, M.C[j].slice()]);
   pushHist('lloyd', `Lloyd iteration ${M.lloydIters}`);
   if (M.converged){
@@ -444,9 +465,9 @@ function lloydStep(){
 }
 
 /* ---------- Swaps ---------- */
-function swapProbs(){
+function swapProbs(mode = P.candidate){
   const N = D.N, w = D.w, p = new Float64Array(N);
-  if (P.candidate === 'uniform'){ for (let i = 0; i < N; i++) p[i] = w[i]/D.wsum; return p; }
+  if (mode === 'uniform'){ for (let i = 0; i < N; i++) p[i] = w[i]/D.wsum; return p; }
   let s = 0; for (let i = 0; i < N; i++) s += w[i]*M.d1[i];
   if (!(s > 0)){ p.fill(1/N); return p; }
   for (let i = 0; i < N; i++) p[i] = w[i]*M.d1[i] / s;
@@ -464,6 +485,17 @@ function removalCosts(ci){
   }
   return Array.from(extra, e => base + e);
 }
+// Probability mass (under proposal p) on candidates whose swap would be accepted with the current removal rule.
+function acceptMass(p){
+  let share = 0, any = false;
+  for (let i = 0; i < D.N; i++){
+    const c = removalCosts(i); let good = 0;
+    for (const v of c) if (v < M.cost * (1 - 1e-12)) good++;
+    if (good) any = true;
+    if (p[i] > 0) share += p[i] * (P.removal === 'best' ? (good ? 1 : 0) : good / c.length);
+  }
+  return { share, any };
+}
 const argmin = a => { let b = 0; for (let i = 1; i < a.length; i++) if (a[i] < a[b]) b = i; return b; };
 
 function polish(withTrails){
@@ -476,17 +508,25 @@ function polish(withTrails){
   return it;
 }
 
+const zeroCostMsg = () => `The cost is <b>zero</b>: every point sits exactly on a center, so every D² weight is 0 and no swap can lower the cost.` +
+  (D.isNested ? ` In nested mode this happens when k equals the number of points (${D.N}). Lower k in panel 2, or oversample (k &gt; K) on the original data before reclustering.` : '');
 const isTerminal = S => !!S && ((S.stage === 4 && (!S.accept || !S.willPolish)) || S.stage === 5);
 
 function swapStage(){
   if (M.phase !== 'ready') return;
   let S = M.swap;
+  if ((!S || isTerminal(S)) && !(M.cost > 0)){ M.swap = null; setMsg(zeroCostMsg()); return; }
   if (!S || isTerminal(S)){
     M.trails = null; M.lastPick = -1;
     M.swap = S = { stage:1, probs:swapProbs() };
-    setMsg(P.candidate === 'd2'
-      ? `Swap step 1 of 4. Each point's area is proportional to its <b>D² weight</b>: squared distance to its nearest center, normalized. Big discs mark points the current centers serve badly; these are the likely proposals.`
-      : `Swap step 1 of 4. <b>Uniform</b> candidates: every point is equally likely, as in naive split heuristics. Proposals mostly land where the data is dense, whether or not it is already covered.`);
+    const wt = D.isNested && P.weighted;
+    const mass = acceptMass(S.probs), other = acceptMass(swapProbs(P.candidate === 'd2' ? 'uniform' : 'd2'));
+    const stat = mass.any
+      ? ` Right now <span class="num">${Math.round(100*mass.share)}%</span> of the proposal probability sits on points whose swap would be accepted (<span class="num">${Math.round(100*other.share)}%</span> with ${P.candidate === 'd2' ? 'uniform' : 'D²'} candidates).`
+      : ` Right now <b>no single swap</b> improves the cost, so every proposal will be rejected: this is a local optimum for swaps.`;
+    setMsg((P.candidate === 'd2'
+      ? `Swap step 1 of 4. Each point's area is proportional to its chance of being proposed: ${wt ? 'weight × D²' : 'D²'}, the squared distance to its nearest center${wt ? ' times its weight' : ''}, normalized. That is the point's share of the current cost, so a big cluster that is correctly fit but spread out can hold more of the probability than a few badly served points.`
+      : `Swap step 1 of 4. <b>Uniform</b> candidates: every ${wt ? 'unit of weight' : 'point'} is equally likely, as in naive split heuristics. Proposals mostly land where the data is dense, whether or not it is already covered.`) + stat);
     return;
   }
   if (S.stage === 1){
@@ -499,10 +539,9 @@ function swapStage(){
     S.costs = removalCosts(S.cand); S.best = argmin(S.costs);
     S.j = P.removal === 'best' ? S.best : Math.floor(algoRand() * M.C.length);
     S.oldCost = M.cost; S.newCost = S.costs[S.j]; S.stage = 3;
-    const pct = (S.newCost/S.oldCost - 1) * 100;
     setMsg(`Step 3: for each center, the labels show how the cost would change if that center were removed and the candidate added. ${P.removal === 'best'
-      ? `LocalSearch++ removes the one with the lowest resulting cost (red ring): <span class="num">${fmtPct(pct)}</span>.`
-      : `With random removal, the ringed center was picked at random: <span class="num">${fmtPct(pct)}</span>. The best choice would give <span class="num">${fmtPct((S.costs[S.best]/S.oldCost-1)*100)}</span>.`}`);
+      ? `LocalSearch++ removes the one with the lowest resulting cost (red ring): <span class="num">${fmtChange(S.newCost, S.oldCost)}</span>.`
+      : `With random removal, the ringed center was picked at random: <span class="num">${fmtChange(S.newCost, S.oldCost)}</span>. The best choice would give <span class="num">${fmtChange(S.costs[S.best], S.oldCost)}</span>.`}`);
     return;
   }
   if (S.stage === 3){
@@ -512,18 +551,18 @@ function swapStage(){
     if (S.accept){
       S.oldPos = M.C[S.j].slice();
       M.C[S.j] = [D.X[2*S.cand], D.X[2*S.cand+1]];
-      assignAll(); M.converged = false; M.swapsAccepted++;
+      assignAll(); M.converged = false; M.swapsAccepted++; recolorCenters();
       pushHist('swap-accept', 'Swap accepted');
-      setMsg(`Step 4: <b>accepted</b>. Cost <span class="num">${fmt(S.oldCost)} → ${fmt(M.cost)}</span> (${fmtPct((M.cost/S.oldCost-1)*100)}). The removed center's points went to their next-nearest center or the candidate.${S.willPolish ? ' Next: polish with Lloyd.' : ''}`);
+      setMsg(`Step 4: <b>accepted</b>. Cost <span class="num">${fmt(S.oldCost)} → ${fmt(M.cost)}</span> (${fmtChange(M.cost, S.oldCost)}). The removed center's points went to their next-nearest center or the candidate.${S.willPolish ? ' Next: polish with Lloyd.' : ''}`);
     } else {
       pushHist('swap-reject', 'Swap rejected');
-      setMsg(`Step 4: <b>rejected</b>. This swap would raise the cost to <span class="num">${fmt(S.newCost)}</span> (${fmtPct((S.newCost/S.oldCost-1)*100)}), so the centers stay as they are.`);
+      setMsg(`Step 4: <b>rejected</b>. This swap would raise the cost to <span class="num">${fmt(S.newCost)}</span> (${fmtChange(S.newCost, S.oldCost)}), so the centers stay as they are.`);
     }
     S.stage = 4;
     return;
   }
   if (S.stage === 4 && S.willPolish){
-    const before = M.cost, it = polish(true);
+    const before = M.cost, it = polish(true); recolorCenters();
     S.stage = 5;
     setMsg(`Polished with <b>${it}</b> Lloyd iteration${it === 1 ? '' : 's'}: cost <span class="num">${fmt(before)} → ${fmt(M.cost)}</span> (${ratioHTML()}). Lloyd never raises the cost, so polishing keeps the swap guarantees.`);
   }
@@ -536,7 +575,7 @@ function fastSwap(){
   if (costs[j] < M.cost * (1 - 1e-12)){
     M.C[j] = [D.X[2*c], D.X[2*c+1]]; assignAll(); M.converged = false; M.swapsAccepted++;
     pushHist('swap-accept', 'Swap accepted');
-    polish(false);
+    polish(false); recolorCenters();
     return true;
   }
   pushHist('swap-reject', 'Swap rejected');
@@ -545,6 +584,11 @@ function fastSwap(){
 
 /* ---------- Formatting ---------- */
 function fmt(v){ if (!isFinite(v)) return '—'; const a = Math.abs(v); if (a >= 1000) return v.toFixed(0); if (a >= 100) return v.toFixed(1); if (a >= 10) return v.toFixed(2); return v.toPrecision(3); }
+// Relative change, or the absolute change when the old cost is zero.
+function fmtChange(nw, old){
+  if (isFinite(old) && old > 0) return fmtPct((nw/old - 1) * 100);
+  const d = nw - old; return Math.abs(d) < 1e-12 ? '±0' : (d > 0 ? '+' : '−') + fmt(Math.abs(d));
+}
 function fmtPct(p){ const s = Math.abs(p) < 0.05 ? '±0.0' : (p > 0 ? '+' : '−') + Math.abs(p).toFixed(Math.abs(p) >= 10 ? 0 : 1); return s + '%'; }
 function fmtTick(v){ if (v >= 1e4) return (v/1000).toFixed(0)+'k'; if (v >= 1000) return (v/1000).toFixed(1).replace(/\.0$/,'')+'k'; if (v >= 1) return String(+v.toPrecision(3)); return String(+v.toPrecision(2)); }
 function setMsg(html){ M.msg = html; }
@@ -568,9 +612,16 @@ const plot = $('plot'), pctx = plot.getContext('2d');
 let PW = 600, PH = 600, dpr = 1;
 const vorCanvas = document.createElement('canvas'); let vorKey = '';
 
+const narrowMQ = window.matchMedia('(max-width: 899px)');
+let lastVH = 0;
 function sizePlot(){
   const w = $('plotWrap').clientWidth;
-  const h = Math.round(Math.min(w, Math.max(340, window.innerHeight - 190)));
+  // Ignore small viewport-height changes (mobile address bar) so the canvas doesn't jitter while scrolling.
+  const vhNow = window.innerHeight;
+  if (!lastVH || Math.abs(vhNow - lastVH) > 90 || w !== PW) lastVH = vhNow;
+  const statusH = document.querySelector('.status').offsetHeight;
+  const avail = narrowMQ.matches ? Math.floor(lastVH*0.58) - statusH - 2 : lastVH - 32 - statusH - 2;
+  const h = Math.round(Math.max(160, Math.min(w, avail)));
   const nd = window.devicePixelRatio || 1;
   if (w === PW && h === PH && nd === dpr && plot.width) return;
   PW = w; PH = h; dpr = nd;
@@ -605,7 +656,7 @@ function arrow(ctx, x0, y0, x1, y1){
 
 function drawVoronoi(ctx, V){
   const step = 3, gw = Math.ceil(PW/step), gh = Math.ceil(PH/step), C = M.C, k = C.length;
-  const key = C.map(c => c[0].toFixed(5)+','+c[1].toFixed(5)).join(';') + '|' + gw + 'x' + gh + '|' + T.bg + COL[0] + '|' + D.bx0.toFixed(5) + D.by0.toFixed(5);
+  const key = C.map(c => c[0].toFixed(5)+','+c[1].toFixed(5)).join(';') + '|' + M.ccol.join(',') + '|' + gw + 'x' + gh + '|' + T.bg + COL[0] + '|' + D.bx0.toFixed(5) + D.by0.toFixed(5);
   if (key !== vorKey){
     vorCanvas.width = gw; vorCanvas.height = gh;
     const vctx = vorCanvas.getContext('2d'), img = vctx.createImageData(gw, gh), data = img.data;
@@ -616,7 +667,7 @@ function drawVoronoi(ctx, V){
         const x = V.ix((gx + 0.5)*step);
         let best = 0, bd = Infinity;
         for (let j = 0; j < k; j++){ const dx = x-C[j][0], dy = y-C[j][1], d = dx*dx+dy*dy; if (d < bd){ bd = d; best = j; } }
-        const c = COLRGB[best], o = 4*(gy*gw + gx);
+        const c = COLRGB[M.ccol[best] % COLRGB.length], o = 4*(gy*gw + gx);
         data[o] = bg.r*(1-a) + c.r*a; data[o+1] = bg.g*(1-a) + c.g*a; data[o+2] = bg.b*(1-a) + c.b*a; data[o+3] = 255;
       }
     }
@@ -627,7 +678,7 @@ function drawVoronoi(ctx, V){
 }
 
 /* True-cluster colors: matched to the learned centers by maximum-overlap assignment (Hungarian algorithm). */
-let trueMap = null, offKey = null;
+let trueMap = null, mapKey = null;   // mapKey: the centers the current colors were matched against
 const truthShown = () => P.colorBy === 'truth' || P.ellipses;
 const centersKey = () => (D.isNested ? 'n:' : 'o:') + M.C.map(c => c[0].toFixed(6) + ',' + c[1].toFixed(6)).join(';');
 const trueColor = L => COL[(trueMap && L < trueMap.length ? trueMap[L] : L) % COL.length];
@@ -653,27 +704,52 @@ function hungarianMax(W, n){
   const match = new Int32Array(n); for (let j = 1; j <= n; j++) if (p[j]) match[p[j]-1] = j-1;
   return match;
 }
+const centerColor = j => COL[M.ccol[j] % COL.length];
+function freeColor(taken){ for (let c = 0; c < COL.length; c++) if (!taken.has(c)) return c; return 0; }
+function overlapMatrix(K, k, n){
+  const W = Array.from({ length:n }, () => new Float64Array(n));
+  for (let i = 0; i < D.N; i++){ const j = M.assign[i], L = D.label[i]; if (j >= 0 && L < K) W[L][j] += D.w[i]; }
+  return W;
+}
+// Recolor the true clusters to match the centers (centers keep their colors).
 function computeTrueMap(){
   const K = P.K, k = M.C.length;
-  trueMap = new Int32Array(K);
+  trueMap = new Int32Array(K); mapKey = centersKey();
   if (!k){ for (let L = 0; L < K; L++) trueMap[L] = L; return; }
-  const n = Math.max(K, k), W = Array.from({ length:n }, () => new Float64Array(n));
-  for (let i = 0; i < D.N; i++){ const j = M.assign[i]; if (j >= 0) W[D.label[i]][j] += D.w[i]; }
-  const match = hungarianMax(W, n);
-  let next = k;                                  // true clusters left unmatched get colors no center uses
-  for (let L = 0; L < K; L++){ const j = match[L]; trueMap[L] = j < k ? j : next++; }
+  const n = Math.max(K, k), match = hungarianMax(overlapMatrix(K, k, n), n);
+  const taken = new Set(M.ccol);                 // true clusters left unmatched get colors no center uses
+  for (let L = 0; L < K; L++){
+    const j = match[L];
+    if (j < k) trueMap[L] = M.ccol[j]; else { trueMap[L] = freeColor(taken); taken.add(trueMap[L]); }
+  }
 }
-// Recolor only when a true-cluster display is switched on, and only if it's the first time
-// or the centers have changed since a true-cluster display was last switched off.
+// Whenever centers change (seeding, Lloyd, swaps, leaving nested mode), recolor the centers to match the (fixed) true-cluster colors.
+// Ties favor each center's current color, so centers whose match didn't change keep their color.
+function recolorCenters(){
+  if (!trueMap) return;
+  const K = trueMap.length, k = M.C.length, n = Math.max(K, k), W = overlapMatrix(K, k, n);
+  for (let L = 0; L < K; L++) for (let j = 0; j < k; j++) if (M.ccol[j] === trueMap[L]) W[L][j] += 1e-3;
+  const match = hungarianMax(W, n), col = new Array(k).fill(-1);
+  for (let L = 0; L < K; L++){ const j = match[L]; if (j < k && W[L][j] > 0.5) col[j] = trueMap[L]; }
+  const reserved = new Set(trueMap);             // centers matched to no true cluster get a color no true cluster uses
+  for (let j = 0; j < k; j++) if (col[j] < 0){
+    col[j] = reserved.has(M.ccol[j]) ? freeColor(reserved) : M.ccol[j];
+    reserved.add(col[j]);
+  }
+  M.ccol = col;
+}
+// Recolor only when a true-cluster display is switched on, and only if the colors are missing or were
+// matched against different centers than the current ones. True-cluster colors never change while a display stays on;
+// centers are recolored to follow them (recolorCenters).
 function setTruthDisplay(change){
-  const before = truthShown(); change(); const after = truthShown();
-  if (!before && after){ if (!trueMap || centersKey() !== offKey) computeTrueMap(); }
-  else if (before && !after) offKey = centersKey();
+  const before = { color:P.colorBy === 'truth', ell:P.ellipses }; change();
+  const turnedOn = (P.colorBy === 'truth' && !before.color) || (P.ellipses && !before.ell);
+  if (turnedOn && (!trueMap || centersKey() !== mapKey)) computeTrueMap();
 }
 
 function pointColor(i){
   if (P.colorBy === 'truth') return trueColor(D.label[i]);
-  const j = M.assign[i]; return j >= 0 ? COL[j] : T.ink2;
+  const j = M.assign[i]; return j >= 0 ? centerColor(j) : T.ink2;
 }
 
 function draw(){
@@ -751,7 +827,7 @@ function draw(){
       ctx.beginPath();
       ctx.ellipse(V.sx(C[j][0]), V.sy(C[j][1]), Math.max(1, 2*Math.sqrt(l1)*V.s), Math.max(1, 2*Math.sqrt(l2)*V.s), -th, 0, 2*Math.PI);
       ctx.globalAlpha = 0.9; ctx.strokeStyle = T.bg; ctx.lineWidth = 3.4; ctx.stroke();
-      ctx.strokeStyle = COL[j]; ctx.lineWidth = 1.8; ctx.stroke();
+      ctx.strokeStyle = centerColor(j); ctx.lineWidth = 1.8; ctx.stroke();
     }
     ctx.restore();
   }
@@ -779,7 +855,7 @@ function draw(){
   for (let j = 0; j < C.length; j++){
     const x = V.sx(C[j][0]), y = V.sy(C[j][1]);
     ctx.beginPath(); ctx.arc(x, y, 8.6, 0, 2*Math.PI); ctx.fillStyle = T.bg; ctx.fill();
-    ctx.beginPath(); ctx.arc(x, y, 6.6, 0, 2*Math.PI); ctx.fillStyle = COL[j]; ctx.fill();
+    ctx.beginPath(); ctx.arc(x, y, 6.6, 0, 2*Math.PI); ctx.fillStyle = centerColor(j); ctx.fill();
     ctx.lineWidth = 1.3; ctx.strokeStyle = T.ink; ctx.stroke();
   }
 
@@ -795,8 +871,7 @@ function draw(){
       if (k <= 12) for (let j = 0; j < k; j++) show.add(j);
       for (const j of show){
         const x = V.sx(C[j][0]), y = V.sy(C[j][1]);
-        const pct = (S.costs[j]/S.oldCost - 1)*100;
-        tag(ctx, fmtPct(pct), x, y, j === S.j ? T.rm : T.ink2, j === S.j || j === S.best);
+        tag(ctx, fmtChange(S.costs[j], S.oldCost), x, y, j === S.j ? T.rm : T.ink2, j === S.j || j === S.best);
       }
       const x = V.sx(C[S.j][0]), y = V.sy(C[S.j][1]);
       ctx.save(); ctx.strokeStyle = T.rm; ctx.lineWidth = 2.2; ctx.setLineDash([4, 3]);
@@ -951,6 +1026,7 @@ function animateSwap(){
 function runSwaps(){
   if (job && job.type === 'batch'){ stopJob(); render(); return; }
   stopJob();
+  if (!(M.cost > 0)){ M.swap = null; setMsg(zeroCostMsg()); render(); return; }
   const n = clamp(parseInt($('swapN').value, 10) || 1, 1, 10000);
   $('swapN').value = n;
   M.swap = null; M.trails = null; M.lastPick = -1;
@@ -997,9 +1073,9 @@ function exitNested(){
   D = Douter; M = Mouter; Mouter = null;
   const before = M.cost, kBefore = M.C.length;
   if (keep){
-    M.C = Mn.C.map(c => c.slice()); M.k = M.C.length; P.kOffset = M.k - P.K;
+    M.C = Mn.C.map(c => c.slice()); M.ccol = Mn.ccol.slice(); M.k = M.C.length; P.kOffset = M.k - P.K;
     M.swap = null; M.trails = null; M.lastPick = -1; M.converged = false; M.phase = 'ready';
-    assignAll(); pushHist('recluster', `Reclustered ${kBefore} → ${M.k} centers`);
+    assignAll(); recolorCenters(); pushHist('recluster', `Reclustered ${kBefore} → ${M.k} centers`);
     setMsg(`Back on the original data with <b>${M.k}</b> reclustered centers (from ${kBefore}). Cost <span class="num">${fmt(before)} → ${fmt(M.cost)}</span> (${ratioHTML()}). Fewer centers always cost more than the oversampled set; the comparison that matters is against the ground-truth line. Lloyd and swaps now polish on the full data.`);
   } else {
     setMsg(`Left nested mode before seeding finished, so the original ${kBefore} centers are unchanged.`);
@@ -1051,7 +1127,9 @@ function updateUI(){
     nb.textContent = 'Recluster these centers';
     const ok = ready && M.C.length >= 2;
     nb.disabled = !ok || !!job;
-    $('nestHint').textContent = ok ? `The ${M.C.length} current centers become a ${P.weighted ? 'weighted ' : ''}dataset; panels 2–4 then cluster them.` : 'Finish seeding at least 2 centers first.';
+    $('nestHint').textContent = !ok ? 'Finish seeding at least 2 centers first.'
+      : M.C.length <= P.K ? `There are only ${M.C.length} centers (K = ${P.K}), so reclustering to K has nothing to prune. Oversample first: set k > K in panel 2.`
+      : `The ${M.C.length} current centers become a ${P.weighted ? 'weighted ' : ''}dataset; panels 2–4 then cluster them.`;
   }
   $('nestSec').classList.toggle('active', nested);
   $('colorBy').innerHTML = `Point colors: <b>${P.colorBy === 'truth' ? 'true cluster' : 'nearest center'}</b>`;
@@ -1081,7 +1159,7 @@ function updateUI(){
 }
 function render(){ draw(); drawChart(); updateUI(); }
 
-function newData(regen){ stopJob(); if (regen) genLatent(); realize(); resetModel(); trueMap = null; offKey = null; if (truthShown()) computeTrueMap(); render(); }
+function newData(regen){ stopJob(); if (regen) genLatent(); realize(); resetModel(); trueMap = null; mapKey = null; if (truthShown()) computeTrueMap(); render(); }
 function bindRange(id, key, fn){ $(id).addEventListener('input', e => { P[key] = +e.target.value; fn(); }); }
 bindRange('K', 'K', () => { $('k').value = kOf(); newData(true); });
 bindRange('N', 'N', () => newData(true));
